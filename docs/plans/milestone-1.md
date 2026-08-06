@@ -66,6 +66,11 @@ Verification evidence:
 - All 20 buildable workspace projects compiled successfully with the
   repository-pinned pnpm 10.9.0.
 - Focused adapter suites passed: ACP 15/15, Antigravity 10/10, and Cursor 19/19.
+- Fork CI run `31125479805` passed the Linux build, serialized workspace tests,
+  complete browser suite, and release/license audits on `2ef5157`. GitHub then
+  failed to acquire a second hosted runner for installer packaging and returned
+  an internal server error after 15 minutes. Installer packaging now runs in
+  the already-verified job, avoiding that unnecessary runner reacquisition.
 - The complete upstream `pnpm test:all` is not green on this Windows host.
   Relay-worker's local Cloudflare emulator produced 28 generic internal errors.
   A separate run excluding relay-worker reached Switchboard and exposed 17
