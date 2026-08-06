@@ -94,7 +94,7 @@ jobs:
 
   deploy-production:
     name: Deploy relay and codor.app
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.repository == 'rjx18/codor' && github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [verify, commit-installers]
     runs-on: ubuntu-24.04
     timeout-minutes: 20

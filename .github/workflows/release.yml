@@ -15,6 +15,7 @@ concurrency:
 jobs:
   publish:
     name: Verify and publish tagged release
+    if: github.repository == 'rjx18/codor'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:

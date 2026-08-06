@@ -57,7 +57,9 @@ at `3b587c75cc02a9580ffbdaaafc217fc4d12d8cf5`. The baseline contains only this
 plan and minimal Windows portability corrections discovered while exercising
 the upstream checks: ACP fixture resolution, Antigravity interrupt
 classification, Cursor's use of the repository-standard `cross-spawn`, and the
-web E2E runner's pnpm launch path. No planned product feature has started.
+web E2E runner's pnpm launch path. Existing Linux CI is retained, with fork
+guards preventing this repository from invoking upstream Cloudflare deployment
+or npm publication jobs. No planned product feature has started.
 
 Verification evidence:
 
