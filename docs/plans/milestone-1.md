@@ -1,9 +1,9 @@
 # Milestone 1: Production team workflow
 
-Status: approved; Work Package 1 complete with inherited Windows test exceptions recorded below  
-Upstream baseline: `rjx18/codor@3b587c75cc02a9580ffbdaaafc217fc4d12d8cf5`  
-Fork: `truthunknown2-art/codor`  
-Production boundary: port `8137` and `C:\Users\pbirc\.codor` must remain untouched until final acceptance.  
+Status: approved; Work Package 1 complete with inherited Windows test exceptions recorded below
+Upstream baseline: `rjx18/codor@3b587c75cc02a9580ffbdaaafc217fc4d12d8cf5`
+Fork: `truthunknown2-art/codor`
+Production boundary: port `8137` and `C:\Users\pbirc\.codor` must remain untouched until final acceptance.
 Development boundary: port `8138` and `C:\Users\pbirc\.codor-dev`.
 
 ## Goal and release gate
