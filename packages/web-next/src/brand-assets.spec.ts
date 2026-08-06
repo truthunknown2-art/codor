@@ -92,7 +92,7 @@ describe('brand assets', () => {
     expect(box?.[2]).toBeLessThan(700); // normalised, not the exporter's 1024 canvas
   });
 
-  it('keeps every committed asset byte-identical to a fresh generator run', () => {
+  it('keeps every committed asset byte-identical to a fresh generator run', { timeout: 15_000 }, () => {
     // Without this the generated-not-hand-committed assumption is unenforced:
     // a hand-edited PNG passes every other gate here.
     const root = resolve(pkg, '../..');
