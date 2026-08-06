@@ -1,5 +1,6 @@
-import { type ChildProcess, spawn } from 'node:child_process';
+import { type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import spawn from 'cross-spawn';
 
 import type {
   AdapterTurnHooks,

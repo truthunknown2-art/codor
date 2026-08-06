@@ -64,13 +64,14 @@ describe('ACP adapter', () => {
 
   it('resolves executable files and symlinks but rejects executable-named directories', () => {
     const dir = mkdtempSync(join(tmpdir(), 'codor-acp-path-'));
-    const executable = join(dir, 'agent');
-    writeFileSync(executable, '#!/bin/sh\n');
+    const extension = process.platform === 'win32' ? '.EXE' : '';
+    const executable = join(dir, `agent${extension}`);
+    writeFileSync(executable, process.platform === 'win32' ? '@exit /b 0\r\n' : '#!/bin/sh\n');
     chmodSync(executable, 0o755);
-    symlinkSync(executable, join(dir, 'linked'));
-    mkdirSync(join(dir, 'directory'), { mode: 0o755 });
+    symlinkSync(executable, join(dir, `linked${extension}`));
+    mkdirSync(join(dir, `directory${extension}`), { mode: 0o755 });
     expect(resolveAcpExecutable('agent', { PATH: dir })).toBe(executable);
-    expect(resolveAcpExecutable('linked', { PATH: dir })).toBe(join(dir, 'linked'));
+    expect(resolveAcpExecutable('linked', { PATH: dir })).toBe(join(dir, `linked${extension}`));
     expect(() => resolveAcpExecutable('directory', { PATH: dir })).toThrow('executable is unavailable');
   });
 
