@@ -64,7 +64,7 @@ import {
   type GitHistoryPage,
   type GitWorkingState,
 } from './git-diff.js';
-import { costProvenanceLabel, type CostProvenance } from './spend-label.js';
+import { memberCostLabel, type CostProvenance } from './spend-label.js';
 import { DiffViewer } from './DiffViewer.js';
 import { harnessLabel, harnessMark } from './harness-marks.js';
 
@@ -505,7 +505,11 @@ function memberStateLabel(state: Member['state']): string {
   return 'Idle';
 }
 
-function compactCostLabel(value: CostProvenance): string {
+function compactCostLabel(value: CostProvenance, billingMode: Member['billing_mode']): string {
+  if (billingMode === 'subscription') {
+    const equivalent = value.cost_usd + (value.estimated_cost_usd ?? 0);
+    return `$0 Codor${equivalent > 0 ? ` + ~${usd(equivalent)} eq.` : ''}`;
+  }
   const estimate = value.estimated_cost_usd ?? 0;
   const unknown = value.uncosted_tokens ?? 0;
   const parts: string[] = [];
@@ -665,9 +669,9 @@ function MemberCard(props: {
                 <MemberMetric
                   icon={CircleDollarSign}
                   label="Cost"
-                  value={compactCostLabel(spend)}
-                  title={`Cost: ${costProvenanceLabel(spend)}`}
-                  accessibleLabel={`Cost: ${costProvenanceLabel(spend)}`}
+                  value={compactCostLabel(spend, member.billing_mode)}
+                  title={`Cost: ${memberCostLabel(spend, member.billing_mode ?? 'unknown')}`}
+                  accessibleLabel={`Cost: ${memberCostLabel(spend, member.billing_mode ?? 'unknown')}`}
                 />
                 <MemberMetric icon={RotateCcw} label="Turns" value={String(spend.turns)} />
               </span>
@@ -1106,6 +1110,9 @@ function ConfigureDialog(props: {
               <option value="indigo">Indigo</option>
               <option value="green">Green</option>
               <option value="violet">Violet</option>
+              <option value="amber">Amber</option>
+              <option value="rose">Rose</option>
+              <option value="cyan">Cyan</option>
             </select>
           </label>
           <label className="nx-field">
@@ -1576,6 +1583,16 @@ function DiffTab(props: { room: string; token: () => string }) {
             {state?.cwds.map((cwd) => <option key={cwd} value={cwd}>{shortenCwd(cwd)}</option>)}
           </select>
         </div>
+      )}
+      {liveMode && state?.repository === true && (
+        <dl className="nx-git-working-meta" data-testid="git-working-meta">
+          <div><dt>Repository</dt><dd title={state.repository_root ?? ''}>{shortenCwd(state.repository_root ?? '')}</dd></div>
+          <div><dt>Worktree</dt><dd title={state.worktree ?? ''}>{shortenCwd(state.worktree ?? '')}</dd></div>
+          <div><dt>Branch</dt><dd>{state.branch ?? 'detached'}</dd></div>
+          <div><dt>HEAD</dt><dd><code>{state.head_sha === null ? 'none' : shortHash(state.head_sha)}</code></dd></div>
+          <div><dt>Upstream</dt><dd>{state.upstream ?? 'none'}{state.upstream === null ? '' : ` · ${String(state.ahead)} ahead / ${String(state.behind)} behind`}</dd></div>
+          <div><dt>State</dt><dd>{state.dirty ? 'dirty' : 'clean'}</dd></div>
+        </dl>
       )}
       {/* Refresh floats at the top-right of the Diff content — icon-only, so it
           never consumes a row — and re-reads only the live working tree. */}

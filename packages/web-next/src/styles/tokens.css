@@ -73,13 +73,19 @@
   --c-diff-add-strong: #166534;
   --c-diff-del-strong: #991b1b;
 
-  /* Identity chip tints (spec §1): indigo / green / violet agents, inverse user */
+  /* Identity chip tints: six agent accents plus the inverse user chip. */
   --chip-indigo-bg: #eef2ff;
   --chip-indigo-ink: #4338ca;
   --chip-green-bg: #f0fdf4;
   --chip-green-ink: #15803d;
   --chip-violet-bg: #f5f3ff;
   --chip-violet-ink: #7c3aed;
+  --chip-amber-bg: #fffbeb;
+  --chip-amber-ink: #92400e;
+  --chip-rose-bg: #fff1f2;
+  --chip-rose-ink: #be123c;
+  --chip-cyan-bg: #ecfeff;
+  --chip-cyan-ink: #0e7490;
   --chip-user-bg: #14532d;
   --chip-user-ink: #dcfce7;
 
@@ -182,6 +188,12 @@ html[data-theme='dark'] {
   --chip-green-ink: #4ade80;
   --chip-violet-bg: #231d33;
   --chip-violet-ink: #c4b5fd;
+  --chip-amber-bg: #2a2113;
+  --chip-amber-ink: #fbbf24;
+  --chip-rose-bg: #2b181d;
+  --chip-rose-ink: #fda4af;
+  --chip-cyan-bg: #102529;
+  --chip-cyan-ink: #67e8f9;
   --chip-user-bg: #dcfce7;
   --chip-user-ink: #14532d;
 
@@ -240,6 +252,12 @@ html[data-theme='dark'] {
     --chip-green-ink: #4ade80;
     --chip-violet-bg: #231d33;
     --chip-violet-ink: #c4b5fd;
+    --chip-amber-bg: #2a2113;
+    --chip-amber-ink: #fbbf24;
+    --chip-rose-bg: #2b181d;
+    --chip-rose-ink: #fda4af;
+    --chip-cyan-bg: #102529;
+    --chip-cyan-ink: #67e8f9;
     --chip-user-bg: #dcfce7;
     --chip-user-ink: #14532d;
 

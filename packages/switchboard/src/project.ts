@@ -13,6 +13,7 @@ export interface ProjectMutationContext {
   current?: ProjectDocument;
   member(id: string): Member | undefined;
   messageExists(id: number): boolean;
+  commitExists(sha: string): boolean;
 }
 
 const owner = (member: Member): boolean => member.kind === 'human' && member.role === 'owner';
@@ -51,6 +52,9 @@ function validateEvidence(context: ProjectMutationContext, task: ProjectTask): v
     if (evidence.type === 'message' && !context.messageExists(evidence.message_id)) {
       throw new Error(`message evidence ${evidence.message_id} does not exist in this room`);
     }
+    if (evidence.type === 'commit' && !context.commitExists(evidence.sha)) {
+      throw new Error(`commit evidence ${evidence.sha} does not resolve in a known room working directory`);
+    }
   }
 }
 
@@ -61,7 +65,6 @@ function validateTasks(context: ProjectMutationContext, tasks: ProjectTask[]): v
     }
     if (task.assignee) activeMember(context, task.assignee, `assignee for ${task.id}`);
     for (const gatekeeper of task.gatekeepers) activeMember(context, gatekeeper, `gatekeeper for ${task.id}`);
-    validateEvidence(context, task);
   }
   const byId = new Map(tasks.map((task) => [task.id, task]));
   const visiting = new Set<string>();
@@ -219,8 +222,8 @@ export function applyProjectMutation(
     const task = taskFor(project, mutation.task_id);
     if (!owner(actor) && actor.id !== task.assignee) throw new Error('forbidden: only the assignee or owner may submit this task');
     if (!['ready', 'in_progress', 'blocked'].includes(task.status)) throw new Error(`task ${task.id} cannot be submitted from ${task.status}`);
+    validateEvidence(context, { ...task, evidence: mutation.evidence });
     const submitted = { ...task, evidence: [...task.evidence, ...mutation.evidence] };
-    validateEvidence(context, submitted);
     next = { ...next, tasks: project.tasks.map((candidate) => candidate.id === task.id
       ? { ...submitted, status: task.gatekeepers.length === 0 ? 'done' : 'in_review' }
       : candidate) };

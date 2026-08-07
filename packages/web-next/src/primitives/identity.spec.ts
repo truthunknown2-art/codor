@@ -10,11 +10,11 @@ describe('memberAccent', () => {
   it('an agent keeps one stable accent for its handle', () => {
     const first = memberAccent({ kind: 'agent', handle: 'fable' });
     expect(memberAccent({ kind: 'agent', handle: 'fable' })).toBe(first);
-    expect(['indigo', 'green', 'violet']).toContain(first);
+    expect(['indigo', 'green', 'violet', 'amber', 'rose', 'cyan']).toContain(first);
   });
 
   it('uses an explicitly configured agent accent everywhere', () => {
-    expect(memberAccent({ kind: 'agent', handle: 'planner', accent: 'violet' })).toBe('violet');
+    expect(memberAccent({ kind: 'agent', handle: 'planner', accent: 'rose' })).toBe('rose');
   });
 });
 

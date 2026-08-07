@@ -151,6 +151,12 @@
   color: var(--c-live-text);
   font: var(--t-caption-strong);
 }
+.nx-row-working.is-indigo, .nx-mobile-sub.is-indigo { color: var(--chip-indigo-ink); }
+.nx-row-working.is-green, .nx-mobile-sub.is-green { color: var(--chip-green-ink); }
+.nx-row-working.is-violet, .nx-mobile-sub.is-violet { color: var(--chip-violet-ink); }
+.nx-row-working.is-amber, .nx-mobile-sub.is-amber { color: var(--chip-amber-ink); }
+.nx-row-working.is-rose, .nx-mobile-sub.is-rose { color: var(--chip-rose-ink); }
+.nx-row-working.is-cyan, .nx-mobile-sub.is-cyan { color: var(--chip-cyan-ink); }
 .nx-row-preview.is-error {
   color: var(--c-error-text);
   font: var(--t-caption-strong);
@@ -438,7 +444,15 @@
   padding: var(--sp-2) var(--sp-3);
   box-shadow: inset 3px 0 0 var(--c-warn);
 }
-.nx-mention-self { font-weight: 700; color: var(--c-warn-text); }
+.nx-agent-mention, .nx-turn-author { font-weight: 700; }
+.nx-agent-mention.is-indigo, .nx-turn-author.is-indigo { color: var(--chip-indigo-ink); }
+.nx-agent-mention.is-green, .nx-turn-author.is-green { color: var(--chip-green-ink); }
+.nx-agent-mention.is-violet, .nx-turn-author.is-violet { color: var(--chip-violet-ink); }
+.nx-agent-mention.is-amber, .nx-turn-author.is-amber { color: var(--chip-amber-ink); }
+.nx-agent-mention.is-rose, .nx-turn-author.is-rose { color: var(--chip-rose-ink); }
+.nx-agent-mention.is-cyan, .nx-turn-author.is-cyan { color: var(--chip-cyan-ink); }
+.nx-agent-mention.is-user, .nx-turn-author.is-user { color: var(--chip-user-bg); }
+.nx-agent-mention.is-self { text-decoration: underline; text-decoration-thickness: 2px; }
 
 .nx-turn-main {
   flex: 1;
@@ -1961,6 +1975,18 @@
 .nx-diff-refresh:disabled { cursor: default; opacity: 0.6; }
 @media (pointer: coarse) { .nx-diff-refresh { width: 44px; height: 44px; } }
 .nx-git-history { position: relative; flex: none; border-bottom: 1px solid var(--c-line); }
+.nx-git-working-meta {
+  display: grid;
+  gap: 4px;
+  padding: var(--sp-3);
+  margin: 0;
+  border-bottom: 1px solid var(--c-line);
+  font: var(--t-caption);
+}
+.nx-git-working-meta > div { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: var(--sp-2); }
+.nx-git-working-meta dt { color: var(--c-faded); }
+.nx-git-working-meta dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--c-secondary); }
+.nx-git-working-meta code { font: var(--t-mono-small); }
 .nx-git-history-toggle {
   display: flex;
   align-items: center;

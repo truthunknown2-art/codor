@@ -1,4 +1,4 @@
-import type { Delivery, Message } from '@codor/protocol';
+import type { Delivery, Member, Message } from '@codor/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('./markdown.js', () => ({ renderMarkdown: (body: string) => body }));
@@ -6,6 +6,7 @@ vi.mock('./markdown.js', () => ({ renderMarkdown: (body: string) => body }));
 import {
   continuationTrailingText,
   continuationVisibleMessages,
+  colorKnownMentions,
   deliveryIndicator,
   messageReadSeq,
   resolveRunningSince,
@@ -13,6 +14,19 @@ import {
 import { transcriptMessages } from './transcript-order.js';
 
 const TS = '2026-07-18T00:00:00.000Z';
+
+it('colours every known mention with the member accent', () => {
+  const members = [
+    { kind: 'agent', handle: 'fable', accent: 'rose' },
+    { kind: 'agent', handle: 'sol', accent: 'cyan' },
+  ] as Member[];
+  expect(colorKnownMentions('@fable hand off to @sol; skip x@y.com', members, 'sol')).toBe(
+    '<strong class="nx-agent-mention is-rose">@fable</strong> hand off to <strong class="nx-agent-mention is-cyan is-self">@sol</strong>; skip x@y.com',
+  );
+  expect(colorKnownMentions('<a title="@fable">@fable</a>', members)).toBe(
+    '<a title="@fable"><strong class="nx-agent-mention is-rose">@fable</strong></a>',
+  );
+});
 
 // harn:assume agent-delivery-lifecycle-streams-v2 ref=steering-delivery-indicator-regression
 describe('delivery indicator truth', () => {

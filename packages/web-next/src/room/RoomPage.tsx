@@ -340,6 +340,11 @@ function ChannelRail(props: {
           const unread = entry.unread;
           const lastTs = entry.latest?.ts;
           const preview = summaryPreview(entry);
+          const previewAuthor = entry.latest === undefined ? undefined : Object.values(roomStates[entry.id]?.members ?? {})
+            .find((member) => member.handle === entry.latest?.author_handle);
+          const previewBody = entry.latest?.preview !== ''
+            ? entry.latest?.preview
+            : entry.latest?.kind === 'run' ? 'run in progress' : '…';
           return (
             <li key={entry.id}>
               <a
@@ -367,14 +372,18 @@ function ChannelRail(props: {
                   </span>
                   <span className="nx-row-bottom">
                     {isWorking ? (
-                      <span className="nx-row-working" data-testid={`room-working-${entry.id}`}>
+                      <span className={`nx-row-working${workingAgents.length === 1 ? ` is-${memberAccent(workingAgents[0]!)}` : ''}`} data-testid={`room-working-${entry.id}`}>
                         <span className="nx-typing" aria-hidden="true"><span /><span /><span /></span>
                         {workingLabel}
                       </span>
                     ) : entry.attention ? (
                       <span className="nx-row-preview is-error">agent needs attention</span>
                     ) : (
-                      <span className="nx-row-preview">{preview}</span>
+                      <span className="nx-row-preview">
+                        {previewAuthor === undefined
+                          ? preview
+                          : <><strong className={`nx-agent-mention is-${memberAccent(previewAuthor)}`}>@{previewAuthor.handle}</strong>: {previewBody}</>}
+                      </span>
                     )}
                     {unread > 0 && (
                       <span className="nx-unread" data-testid={`rail-unread-${entry.id}`}>
@@ -445,7 +454,7 @@ function ChatPanel(props: {
   );
   const workingAgent = useClientStore((state) =>
     Object.values(roomSlice(state, props.room).members)
-      .find((member) => member.kind === 'agent' && (member.state === 'running' || member.state === 'queued'))?.handle,
+      .find((member) => member.kind === 'agent' && (member.state === 'running' || member.state === 'queued')),
   );
   const [searching, setSearching] = useState(false);
 
@@ -456,8 +465,8 @@ function ChatPanel(props: {
           <IconButton icon={ChevronLeft} label="Back to channels" data-testid="mobile-back" onClick={props.mobile.onBack} />
           <div className="nx-mobile-title">
             <h1>{room?.name ?? props.room}</h1>
-            <span className="nx-mobile-sub">
-              {workingAgent !== undefined ? `@${workingAgent} is working…` : connected ? 'live' : 'reconnecting…'}
+            <span className={`nx-mobile-sub${workingAgent !== undefined ? ` is-${memberAccent(workingAgent)}` : ''}`}>
+              {workingAgent !== undefined ? `@${workingAgent.handle} is working…` : connected ? 'live' : 'reconnecting…'}
             </span>
           </div>
           <IconButton icon={ClipboardList} label="Open project board" data-testid="project-board-trigger" onClick={props.mobile.onBoard} />
