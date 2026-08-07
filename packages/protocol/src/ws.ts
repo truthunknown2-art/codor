@@ -12,6 +12,8 @@ import { MemberIdSchema, MessageIdSchema, RoomIdSchema, SeqSchema, TimestampSche
 import { AssignableHandleSchema } from './member.js';
 import { MemberSchema } from './member.js';
 import { MessageSchema, VoiceNoteSchema } from './message.js';
+import { ProjectDocumentSchema } from './project.js';
+import { TeamProfileSchema } from './profile.js';
 import { RoomMeterSchema, RoomSchema, RoomSupportSchema } from './room.js';
 
 // ── client → server ────────────────────────────────────────────────────────
@@ -69,6 +71,9 @@ export type PostFrame = z.infer<typeof PostFrameSchema>;
 
 export const ListRoomsFrameSchema = z.object({ type: z.literal('list_rooms') });
 export type ListRoomsFrame = z.infer<typeof ListRoomsFrameSchema>;
+
+export const ListTeamProfilesFrameSchema = z.object({ type: z.literal('list_team_profiles') });
+export type ListTeamProfilesFrame = z.infer<typeof ListTeamProfilesFrameSchema>;
 
 export const ActSchema = z.discriminatedUnion('act', [
   z.object({
@@ -246,6 +251,7 @@ export type MirrorSessionEndFrame = z.infer<typeof MirrorSessionEndFrameSchema>;
 
 export const ClientFrameSchema = z.discriminatedUnion('type', [
   ListRoomsFrameSchema,
+  ListTeamProfilesFrameSchema,
   SubscribeFrameSchema,
   PostFrameSchema,
   ActFrameSchema,
@@ -321,6 +327,8 @@ export const ServerFrameSchema = z.discriminatedUnion('type', [
   // harn:end live-delivery-consumption-is-idempotent
   z.object({ type: z.literal('meter'), seq: SeqSchema, meter: RoomMeterSchema }),
   z.object({ type: z.literal('room'), seq: SeqSchema, room: RoomSchema }),
+  z.object({ type: z.literal('project'), seq: SeqSchema, project: ProjectDocumentSchema }),
+  z.object({ type: z.literal('team_profiles'), profiles: z.array(TeamProfileSchema).max(100) }),
   // harn:assume room-support-is-bounded-recipient-scoped-state ref=room-support-protocol
   z.object({ type: z.literal('room_support'), seq: SeqSchema, support: RoomSupportSchema }),
   // harn:end room-support-is-bounded-recipient-scoped-state

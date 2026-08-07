@@ -24,6 +24,12 @@ export type Custody = z.infer<typeof CustodySchema>;
 export const RoleSchema = z.enum(['owner', 'admin', 'member', 'observer']);
 export type Role = z.infer<typeof RoleSchema>;
 
+export const BillingModeSchema = z.enum(['subscription', 'api', 'unknown']);
+export type BillingMode = z.infer<typeof BillingModeSchema>;
+
+export const MemberAccentSchema = z.string().trim().min(1).max(64);
+export type MemberAccent = z.infer<typeof MemberAccentSchema>;
+
 // harn:assume reserved-handles-rejected ref=handle-schema
 export const HANDLE_REGEX = /^[a-z0-9][a-z0-9-]{1,30}$/;
 export const RESERVED_HANDLES = ['all', 'switchboard'] as const;
@@ -167,6 +173,8 @@ export const MemberSchema = z
     kind: MemberKindSchema,
     handle: HandleSchema,
     display_name: z.string(),
+    accent: MemberAccentSchema.optional(),
+    billing_mode: BillingModeSchema.optional(),
     // harn:assume member-purpose-protocol-metadata ref=member-purpose-field
     purpose: z.string().optional(),
     // harn:end member-purpose-protocol-metadata

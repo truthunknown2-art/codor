@@ -1364,6 +1364,38 @@ describe('REST', () => {
 });
 
 describe('WebSocket', () => {
+  it('lists durable team profiles and hydrates then streams project state', async () => {
+    daemon.store.saveTeamProfile({
+      id: 'production', name: 'Production', coordinator_handle: 'planner',
+      members: [{
+        handle: 'planner', display_name: 'Planner', harness: 'claude-code',
+        policy: 'workspace-write', purpose: 'Coordinate', accent: 'violet',
+        billing_mode: 'subscription', required: true,
+      }],
+    }, 0);
+    const owner = daemon.store.getMemberByHandle('eng', 'richard')!;
+    const project = daemon.saveProject({
+      room: 'eng', title: 'Codor fork', objective: 'Persist project state',
+      status: 'planning', coordinator: owner.id, guarded_autopilot: false,
+      milestones: [], tasks: [],
+    }, 0);
+
+    const client = await connect();
+    client.ws.send(JSON.stringify({ type: 'list_team_profiles' }));
+    await expect(client.next((frame) => frame.type === 'team_profiles')).resolves.toMatchObject({
+      profiles: [{ id: 'production', coordinator_handle: 'planner' }],
+    });
+    client.ws.send(JSON.stringify({ type: 'subscribe', room: 'eng', since_seq: 0 }));
+    await client.next((frame) => frame.type === 'sync_complete');
+    expect(client.frames).toContainEqual({ type: 'project', seq: 0, project });
+
+    const { version: _version, created_ts: _created, updated_ts: _updated, ...input } = project;
+    const updated = daemon.saveProject({ ...input, status: 'active' }, project.version);
+    await expect(client.next((frame) => frame.type === 'project' && frame.seq > 0))
+      .resolves.toMatchObject({ project: updated });
+    client.ws.close();
+  });
+
   it.skipIf(process.platform === 'win32')('rejects a public unix socket parent before listen', async () => {
     const publicParent = join(dir, 'public-socket-parent');
     mkdirSync(publicParent, { mode: 0o755 });

@@ -122,6 +122,22 @@ const resultMessageFor = (root: Message) => daemon.store.getMessage(
   root.run?.result_message_id ?? root.id,
 )!;
 
+describe('project live state', () => {
+  it('emits the committed project frame and returns it from sync', () => {
+    const owner = daemon.store.getMemberByHandle('eng', 'richard')!;
+    const project = daemon.saveProject({
+      room: 'eng', title: 'Codor fork', objective: 'Persist project state',
+      status: 'planning', coordinator: owner.id, guarded_autopilot: false,
+      milestones: [], tasks: [],
+    }, 0);
+    expect(frames.at(-1)).toEqual({
+      room: 'eng',
+      frame: { type: 'project', seq: daemon.store.currentSeq('eng'), project },
+    });
+    expect(daemon.sync('eng', 0).project).toEqual(project);
+  });
+});
+
 // harn:assume continuation-writer-follows-journaled-output-ownership ref=continuation-writer-regression
 // harn:assume finalized-turn-routes-aggregate-from-terminal-output ref=aggregate-routing-regression
 describe('chronological continuation writer', () => {

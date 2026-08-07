@@ -1,6 +1,6 @@
 # Milestone 1: Production team workflow
 
-Status: approved; Work Package 1 complete with inherited Windows test exceptions recorded below
+Status: approved; Work Package 1 complete; Work Package 2 implementation and local verification complete
 Upstream baseline: `rjx18/codor@3b587c75cc02a9580ffbdaaafc217fc4d12d8cf5`
 Fork: `truthunknown2-art/codor`
 Production boundary: port `8137` and `C:\Users\pbirc\.codor` must remain untouched until final acceptance.
@@ -88,8 +88,6 @@ Verification evidence:
 - No production runtime, room, agent, token, database, Scheduled Task, or
   Tailscale configuration was read, copied, restarted, or modified.
 
-WP2 is the next unblocked package and has not started.
-
 ### WP2 - Protocol and durable-state foundation
 
 Primary invariant: project, profile, and member metadata survive restart and
@@ -102,6 +100,30 @@ optimistic-version conflicts, cold/warm synchronization, and backward defaults.
 
 Completion: schemas, SQLite persistence, and live project frames are
 review-clean.
+
+WP2 result (2026-08-06): implementation and local verification complete. The
+protocol now defines bounded project documents, reusable team profiles,
+member accent/billing metadata, project change-log entries, and project/profile
+sync frames. SQLite persists one versioned project per room, versioned global
+team profiles, and additive member metadata. Project/profile saves reject stale
+versions atomically; projects participate in warm and cold room sync and live
+fanout. Profile spawning, board mutations/UI, and automatic routing remain in
+their later work packages.
+
+Verification evidence:
+
+- Protocol and Switchboard TypeScript builds passed.
+- Protocol, store, server, and affected web-state regression suites passed
+  411/411 tests with two existing platform skips.
+- Focused daemon project-frame verification passed 1/1.
+- Migration coverage removes the new member columns from a populated current
+  database, reopens it, and proves the honest `billing_mode: unknown` default.
+- Persistence coverage closes and reopens SQLite, proving project, profile,
+  accent, and billing state survive; stale project and profile versions fail.
+- WebSocket coverage proves profile listing, project cold hydration, and a live
+  subsequent project version on the shared protocol.
+- The broader daemon suite reproduced the inherited Windows artifact-snapshot
+  exceptions recorded under WP1; no WP2 assertion remains failing.
 
 ### WP3 - Team profiles and editable member configuration
 

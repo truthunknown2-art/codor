@@ -26,6 +26,9 @@ import {
   MessageSchema,
   type PendingInteraction,
   PendingInteractionSchema,
+  type ProjectDocument,
+  type ProjectDocumentInput,
+  ProjectDocumentSchema,
   type Room,
   type RoomConfig,
   RoomConfigSchema,
@@ -36,6 +39,9 @@ import {
   type RoomSupport,
   RoomSupportSchema,
   type SessionLifecycleSupport,
+  type TeamProfile,
+  type TeamProfileInput,
+  TeamProfileSchema,
   type RunSummary,
   RunSummarySchema,
   deriveRoomColor,
@@ -98,7 +104,19 @@ CREATE TABLE IF NOT EXISTS members (
   misaddressed INTEGER NOT NULL DEFAULT 0,
   roster_stale INTEGER NOT NULL DEFAULT 1,
   removed_ts TEXT,
-  tasks TEXT                    -- AgentTaskList JSON projection; NULL when empty
+  tasks TEXT,                   -- AgentTaskList JSON projection; NULL when empty
+  accent TEXT,
+  billing_mode TEXT NOT NULL DEFAULT 'unknown'
+);
+CREATE TABLE IF NOT EXISTS projects (
+  room TEXT PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL,
+  document TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS team_profiles (
+  id TEXT PRIMARY KEY,
+  version INTEGER NOT NULL,
+  document TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS messages (
   room TEXT NOT NULL REFERENCES rooms(id),
@@ -222,7 +240,7 @@ CREATE TABLE IF NOT EXISTS attach_leases (
 CREATE TABLE IF NOT EXISTS changes (
   room_id TEXT NOT NULL REFERENCES rooms(id),
   seq INTEGER NOT NULL,
-  entity TEXT NOT NULL,        -- message|member|inbox|meter|room
+  entity TEXT NOT NULL,        -- message|member|inbox|meter|room|project
   entity_id TEXT NOT NULL,
   PRIMARY KEY (room_id, seq)
 );
@@ -340,6 +358,16 @@ function migrateMemberAcpProvider(db: Database.Database): void {
   }
 }
 // harn:end named-acp-provider-selection-resolves-to-private-structured-launch
+
+function migrateMemberPresentation(db: Database.Database): void {
+  const columns = db.pragma('table_info(members)') as { name: string }[];
+  if (!columns.some((column) => column.name === 'accent')) {
+    db.exec('ALTER TABLE members ADD COLUMN accent TEXT');
+  }
+  if (!columns.some((column) => column.name === 'billing_mode')) {
+    db.exec("ALTER TABLE members ADD COLUMN billing_mode TEXT NOT NULL DEFAULT 'unknown'");
+  }
+}
 
 // harn:assume agent-member-credentials-stay-secret ref=member-credential-storage
 function migrateMemberCredential(db: Database.Database): void {
@@ -898,6 +926,8 @@ interface MemberRow {
   kind: string;
   handle: string;
   display_name: string;
+  accent: string | null;
+  billing_mode: string;
   purpose: string | null;
   harness: string | null;
   session_ref: string | null;
@@ -1050,6 +1080,8 @@ function memberFromRow(row: MemberRow): Member {
     kind: row.kind,
     handle: row.handle,
     display_name: row.display_name,
+    accent: row.accent ?? undefined,
+    billing_mode: row.billing_mode,
     purpose: row.purpose ?? undefined,
     harness: row.harness ?? undefined,
     session_ref: row.session_ref ?? undefined,
@@ -1230,6 +1262,8 @@ export interface NewMember {
   kind: Member['kind'];
   handle: string;
   display_name: string;
+  accent?: string;
+  billing_mode?: Member['billing_mode'];
   purpose?: string;
   harness?: string;
   session_ref?: string;
@@ -1283,6 +1317,18 @@ export interface SyncResult {
   inbox: Delivery[];
   meters: RoomMeter[];
   support?: RoomSupport;
+  project?: ProjectDocument;
+}
+
+export class VersionConflictError extends Error {
+  constructor(
+    readonly entity: 'project' | 'team_profile',
+    readonly expectedVersion: number,
+    readonly currentVersion: number,
+  ) {
+    super(`${entity} version conflict: expected ${expectedVersion}, current ${currentVersion}`);
+    this.name = 'VersionConflictError';
+  }
 }
 
 export interface FanoutDelivery {
@@ -1381,6 +1427,7 @@ export class Store {
       migrateMemberTasks(this.db);
       migrateMemberContextWindow(this.db);
       migrateMemberAcpProvider(this.db);
+      migrateMemberPresentation(this.db);
       migrateMemberCredential(this.db);
       migrateMessageAck(this.db);
       migrateMessagePinned(this.db);
@@ -1512,19 +1559,110 @@ export class Store {
     })();
   }
 
+  // ── project and team profile documents ───────────────────────────────
+
+  getProject(room: string): ProjectDocument | undefined {
+    const row = this.db.prepare('SELECT document FROM projects WHERE room = ?')
+      .get(room) as { document: string } | undefined;
+    return row === undefined ? undefined : ProjectDocumentSchema.parse(JSON.parse(row.document));
+  }
+
+  saveProject(input: ProjectDocumentInput, expectedVersion: number): ProjectDocument {
+    return this.db.transaction(() => {
+      if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) {
+        throw new Error('expected project version must be a nonnegative safe integer');
+      }
+      if (!this.getRoom(input.room)) throw new Error(`no such room: ${input.room}`);
+      const current = this.getProject(input.room);
+      const currentVersion = current?.version ?? 0;
+      if (expectedVersion !== currentVersion) {
+        throw new VersionConflictError('project', expectedVersion, currentVersion);
+      }
+      const ts = new Date().toISOString();
+      const project = ProjectDocumentSchema.parse({
+        ...input,
+        version: currentVersion + 1,
+        created_ts: current?.created_ts ?? ts,
+        updated_ts: ts,
+      });
+      this.db.prepare(
+        `INSERT INTO projects (room, version, document) VALUES (?, ?, ?)
+         ON CONFLICT (room) DO UPDATE SET version = excluded.version, document = excluded.document`,
+      ).run(input.room, project.version, JSON.stringify(project));
+      this.appendChange(input.room, 'project', input.room);
+      return project;
+    })();
+  }
+
+  getTeamProfile(id: string): TeamProfile | undefined {
+    const row = this.db.prepare('SELECT document FROM team_profiles WHERE id = ?')
+      .get(id) as { document: string } | undefined;
+    return row === undefined ? undefined : TeamProfileSchema.parse(JSON.parse(row.document));
+  }
+
+  listTeamProfiles(): TeamProfile[] {
+    const rows = this.db.prepare('SELECT document FROM team_profiles ORDER BY id')
+      .all() as { document: string }[];
+    return rows.map((row) => TeamProfileSchema.parse(JSON.parse(row.document)));
+  }
+
+  saveTeamProfile(input: TeamProfileInput, expectedVersion: number): TeamProfile {
+    return this.db.transaction(() => {
+      if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) {
+        throw new Error('expected team profile version must be a nonnegative safe integer');
+      }
+      const current = this.getTeamProfile(input.id);
+      if (current === undefined) {
+        const count = this.db.prepare('SELECT COUNT(*) AS count FROM team_profiles')
+          .get() as { count: number };
+        if (count.count >= 100) throw new Error('team profile limit reached');
+      }
+      const currentVersion = current?.version ?? 0;
+      if (expectedVersion !== currentVersion) {
+        throw new VersionConflictError('team_profile', expectedVersion, currentVersion);
+      }
+      const ts = new Date().toISOString();
+      const profile = TeamProfileSchema.parse({
+        ...input,
+        version: currentVersion + 1,
+        created_ts: current?.created_ts ?? ts,
+        updated_ts: ts,
+      });
+      this.db.prepare(
+        `INSERT INTO team_profiles (id, version, document) VALUES (?, ?, ?)
+         ON CONFLICT (id) DO UPDATE SET version = excluded.version, document = excluded.document`,
+      ).run(profile.id, profile.version, JSON.stringify(profile));
+      return profile;
+    })();
+  }
+
+  deleteTeamProfile(id: string, expectedVersion: number): void {
+    this.db.transaction(() => {
+      if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) {
+        throw new Error('expected team profile version must be a nonnegative safe integer');
+      }
+      const current = this.getTeamProfile(id);
+      const currentVersion = current?.version ?? 0;
+      if (expectedVersion !== currentVersion) {
+        throw new VersionConflictError('team_profile', expectedVersion, currentVersion);
+      }
+      if (current !== undefined) this.db.prepare('DELETE FROM team_profiles WHERE id = ?').run(id);
+    })();
+  }
+
   // ── members ───────────────────────────────────────────────────────────
 
   private insertMember(room: string, member: NewMember): Member {
-    const validated = MemberSchema.parse({ id: this.newUlid(), ...member });
+    const validated = MemberSchema.parse({ id: this.newUlid(), billing_mode: 'unknown', ...member });
     // harn:assume named-acp-provider-selection-resolves-to-private-structured-launch ref=acp-provider-storage
     // The safe public provider id is persisted with the other member identity columns.
     // The exact launch is written privately (addMember) and never appears here.
     this.db
       .prepare(
-        `INSERT INTO members (id, room, kind, handle, display_name, purpose, harness, session_ref,
+        `INSERT INTO members (id, room, kind, handle, display_name, accent, billing_mode, purpose, harness, session_ref,
            cwd, policy, model, thinking, host, state, custody, parent, role, conventions_sent,
            misaddressed, roster_stale, removed_ts, acp_provider)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         validated.id,
@@ -1532,6 +1670,8 @@ export class Store {
         validated.kind,
         validated.handle,
         validated.display_name,
+        orNull(validated.accent),
+        validated.billing_mode ?? 'unknown',
         orNull(validated.purpose),
         orNull(validated.harness),
         orNull(validated.session_ref),
@@ -1748,7 +1888,8 @@ export class Store {
           // READ about them — but not this. Nothing changed them after spawn, so nothing
           // noticed. A configure that called this would have reported success and
           // persisted nothing at all.
-          `UPDATE members SET handle = ?, display_name = ?, purpose = ?, harness = ?, session_ref = ?,
+          `UPDATE members SET handle = ?, display_name = ?, accent = ?, billing_mode = ?,
+             purpose = ?, harness = ?, session_ref = ?,
              cwd = ?, policy = ?, model = ?, thinking = ?, host = ?, state = ?, custody = ?,
              parent = ?, role = ?, conventions_sent = ?, misaddressed = ?, roster_stale = ?,
              removed_ts = ?, limits = ?, tasks = ?, acp_provider = ?
@@ -1757,6 +1898,8 @@ export class Store {
         .run(
           merged.handle,
           merged.display_name,
+          orNull(merged.accent),
+          merged.billing_mode ?? 'unknown',
           orNull(merged.purpose),
           orNull(merged.harness),
           orNull(merged.session_ref),
@@ -4233,6 +4376,7 @@ export class Store {
         meters: [...(wanted.get('meter') ?? [])]
           .map((day) => this.getMeter(room, day))
           .filter((meter): meter is RoomMeter => meter !== undefined),
+        ...(wanted.has('project') && { project: this.getProject(room) }),
         ...(opts.supportFor !== undefined && {
           support: this.roomSupport(room, opts.supportFor),
         }),
@@ -4324,6 +4468,7 @@ export class Store {
     const latestMeter = this.db
       .prepare('SELECT * FROM meters WHERE room = ? ORDER BY day DESC LIMIT 1')
       .get(room) as MeterRow | undefined;
+    const project = this.getProject(room);
 
     return {
       seq,
@@ -4335,6 +4480,7 @@ export class Store {
       members: this.listMembers(room, { includeRemoved: true }),
       inbox: this.listDeliveries(room),
       meters: latestMeter ? [meterFromRow(latestMeter)] : [],
+      ...(project !== undefined && { project }),
       ...(supportFor !== undefined && { support: this.roomSupport(room, supportFor) }),
     };
   }

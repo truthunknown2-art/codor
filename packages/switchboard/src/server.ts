@@ -1510,6 +1510,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               ),
             });
             // harn:end list-rooms-reply-carries-per-room-seq
+          } else if (frame.type === 'list_team_profiles') {
+            if (!authorizeGlobal(principal, 'read')) {
+              throw new Error('forbidden: principal cannot list team profiles');
+            }
+            send({ type: 'team_profiles', profiles: daemon.store.listTeamProfiles() });
           } else if (frame.type === 'subscribe') {
             // harn:assume browser-protocol-epoch-blocks-only-stale-browser-ui ref=browser-protocol-admission
             const browserClient = principal.kind === 'browser'
@@ -1557,6 +1562,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             // harn:assume multiplexed-subscriptions-identify-their-room ref=room-addressed-hydration
             send({ type: 'self', member_id: actor.id, ...address });
             send({ type: 'room', seq: hydrationCursor, room: sync.room });
+            if (sync.project !== undefined) {
+              send({ type: 'project', seq: hydrationCursor, project: sync.project });
+            }
             for (const member of sync.members) {
               send({ type: 'member', seq: hydrationCursor, member, ...address });
             }

@@ -26,6 +26,7 @@ import {
   MessageSchema,
   parseRunItemPayload,
   PendingInteractionSchema,
+  ProjectDocumentSchema,
   PolicySchema, PostFrameSchema, VoiceNoteSchema,
   ReasoningSummaryPayloadSchema,
   RoomIdSchema,
@@ -34,6 +35,7 @@ import {
   RoomSchema,
   RunSearchHitSchema,
   ServerFrameSchema,
+  TeamProfileSchema,
   TextDeltaPayloadSchema,
   ThinkingLevelSchema,
   ToolCallPayloadSchema,
@@ -46,6 +48,52 @@ const ULID_A = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
 const ULID_B = '01BX5ZZKBKACTAV9WEVGEMMVRZ';
 const DELIVERY_ID = '018f47b4-7f9f-7d3b-a064-52f004c2b782';
 const TS = '2026-07-10T07:00:00.000Z';
+
+describe('project and team profile documents', () => {
+  it('accepts bounded durable state and rejects dangling project references', () => {
+    const base = {
+      room: 'eng',
+      title: 'Ship Codor',
+      objective: 'Make orchestration durable',
+      status: 'active',
+      coordinator: ULID_A,
+      guarded_autopilot: false,
+      milestones: [{ id: 'm1', title: 'Foundation', order: 0, status: 'active' }],
+      tasks: [{
+        id: 't1', milestone_id: 'm1', title: 'Persist state', description: 'Use SQLite',
+        acceptance_criteria: ['Survives restart'], dependencies: [], gatekeepers: [ULID_A],
+        workspace_mode: 'write', status: 'ready', revision: 0, evidence: [], reviews: [],
+      }],
+      version: 1,
+      created_ts: TS,
+      updated_ts: TS,
+    } as const;
+    expect(ProjectDocumentSchema.safeParse(base).success).toBe(true);
+    expect(ProjectDocumentSchema.safeParse({
+      ...base,
+      tasks: [{ ...base.tasks[0], dependencies: ['missing'] }],
+    }).success).toBe(false);
+  });
+
+  it('keeps team profiles bounded and excludes machine/session secrets', () => {
+    const profile = {
+      id: 'production', name: 'Production', coordinator_handle: 'planner',
+      members: [{
+        handle: 'planner', display_name: 'Planner', harness: 'claude-code',
+        policy: 'workspace-write', purpose: 'Coordinate the work', accent: 'violet',
+        billing_mode: 'subscription', required: true,
+      }],
+      version: 1,
+      created_ts: TS,
+      updated_ts: TS,
+    } as const;
+    expect(TeamProfileSchema.safeParse(profile).success).toBe(true);
+    expect(TeamProfileSchema.safeParse({
+      ...profile,
+      members: [{ ...profile.members[0], cwd: 'C:\\secret', session_ref: 'native-session' }],
+    }).success).toBe(false);
+  });
+});
 
 const chatMessage = {
   id: 1,
@@ -154,6 +202,12 @@ describe('members', () => {
     const parsed = MemberSchema.parse(agent);
     expect(parsed.model).toBeUndefined();
     expect(parsed.thinking).toBeUndefined();
+  });
+
+  it('keeps billing mode additive for older member literals', () => {
+    expect(MemberSchema.parse(agent).billing_mode).toBeUndefined();
+    expect(MemberSchema.parse({ ...agent, billing_mode: 'subscription' }).billing_mode)
+      .toBe('subscription');
   });
 
   it('rejects a thinking level the protocol does not define', () => {
@@ -456,7 +510,7 @@ describe('deliveries', () => {
 });
 
 describe('change log', () => {
-  it.each(['message', 'member', 'inbox', 'meter', 'room'] as const)(
+  it.each(['message', 'member', 'inbox', 'meter', 'room', 'project'] as const)(
     'covers entity %s',
     (entity) => {
       expect(
