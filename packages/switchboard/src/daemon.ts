@@ -22,6 +22,8 @@ import type {
   MemberStatusResponse,
   Message,
   PendingInteraction,
+  ProjectDocument,
+  ProjectDocumentInput,
   ProducedArtifact,
   ProducedArtifactError,
   Role,
@@ -5022,6 +5024,12 @@ export class Daemon {
     });
   }
   // harn:end live-agent-waits-are-transient
+
+  saveProject(input: ProjectDocumentInput, expectedVersion: number): ProjectDocument {
+    const project = this.store.saveProject(input, expectedVersion);
+    this.emit(input.room, { type: 'project', seq: this.store.currentSeq(input.room), project });
+    return project;
+  }
 
   readRunBlob(room: string, msgId: number): WireEvent[] {
     const message = this.store.getMessage(room, msgId);

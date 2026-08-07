@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { Store } from './store.js';
+import { Store, VersionConflictError } from './store.js';
 import { estimateCostUsd } from './pricing.js';
 
 let dir: string;
@@ -539,6 +539,66 @@ describe('change log completeness', () => {
     expect(result.meters).toHaveLength(1);
     expect(result.members).toHaveLength(0); // unchanged since cursor
     expect(result.seq).toBe(store.currentSeq('eng'));
+  });
+});
+
+describe('durable project and team state', () => {
+  it('persists atomically, rejects stale versions, and hydrates project deltas', () => {
+    const { owner } = openRoom(store);
+    const agent = store.addMember('eng', {
+      kind: 'agent', handle: 'coder', display_name: 'Coder', state: 'idle',
+      accent: 'blue', billing_mode: 'subscription',
+    });
+    const before = store.currentSeq('eng');
+    const input = {
+      room: 'eng', title: 'Codor fork', objective: 'Make team state durable',
+      status: 'active' as const, coordinator: owner.id, guarded_autopilot: false,
+      milestones: [{ id: 'm1', title: 'Foundation', order: 0, status: 'active' as const }],
+      tasks: [{
+        id: 't1', milestone_id: 'm1', title: 'Persist state', description: 'Use SQLite',
+        acceptance_criteria: ['Survives restart'], dependencies: [], assignee: agent.id,
+        gatekeepers: [owner.id], workspace_mode: 'write' as const, status: 'ready' as const,
+        revision: 0, evidence: [], reviews: [],
+      }],
+    };
+    const project = store.saveProject(input, 0);
+    expect(project.version).toBe(1);
+    expect(store.sync('eng', before).project).toEqual(project);
+    expect(store.sync('eng', 0, { hydrateLimit: 10 }).project).toEqual(project);
+    expect(() => store.saveProject({ ...input, title: 'Stale' }, 0))
+      .toThrow(VersionConflictError);
+
+    const profile = store.saveTeamProfile({
+      id: 'production', name: 'Production', coordinator_handle: 'planner',
+      members: [{
+        handle: 'planner', display_name: 'Planner', harness: 'claude-code',
+        policy: 'workspace-write', purpose: 'Coordinate', accent: 'violet',
+        billing_mode: 'subscription', required: true,
+      }],
+    }, 0);
+    expect(() => store.saveTeamProfile({
+      id: 'production', name: 'Stale', coordinator_handle: 'planner', members: profile.members,
+    }, 0)).toThrow(VersionConflictError);
+
+    store.close();
+    store = new Store(join(dir, 'test.sqlite'));
+    expect(store.getProject('eng')).toEqual(project);
+    expect(store.listTeamProfiles()).toEqual([profile]);
+    expect(store.getMember('eng', agent.id)).toMatchObject({
+      accent: 'blue', billing_mode: 'subscription',
+    });
+  });
+
+  it('migrates existing members to honest presentation defaults', () => {
+    const { owner } = openRoom(store);
+    store.close();
+    const db = new Database(join(dir, 'test.sqlite'));
+    db.exec('ALTER TABLE members DROP COLUMN accent; ALTER TABLE members DROP COLUMN billing_mode;');
+    db.close();
+
+    store = new Store(join(dir, 'test.sqlite'));
+    expect(store.getMember('eng', owner.id)).toMatchObject({ billing_mode: 'unknown' });
+    expect(store.getMember('eng', owner.id)?.accent).toBeUndefined();
   });
 });
 
