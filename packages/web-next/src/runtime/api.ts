@@ -6,6 +6,8 @@ import type {
   ProducedArtifact,
   ProducedArtifactError,
   Room,
+  TeamProfile,
+  TeamProfileInput,
   WireEvent,
 } from '@codor/protocol';
 
@@ -223,6 +225,53 @@ export async function createRoom(
     );
   }
   return created.room;
+}
+
+export async function fetchTeamProfiles(options: ApiOptions): Promise<TeamProfile[]> {
+  return (await fetchJson<{ profiles: TeamProfile[] }>('/api/team-profiles', options)).profiles;
+}
+
+export async function saveTeamProfile(
+  profile: TeamProfileInput,
+  expectedVersion: number,
+  options: ApiOptions,
+): Promise<TeamProfile> {
+  return sendJson<TeamProfile>('/api/team-profiles', 'POST', {
+    profile, expected_version: expectedVersion,
+  }, options);
+}
+
+export async function saveCurrentTeamProfile(
+  input: {
+    room: string;
+    id: string;
+    name: string;
+    coordinator_handle: string;
+    expected_version: number;
+  },
+  options: ApiOptions,
+): Promise<TeamProfile> {
+  return sendJson<TeamProfile>('/api/team-profiles/from-room', 'POST', input, options);
+}
+
+export async function deleteTeamProfile(
+  profileId: string,
+  expectedVersion: number,
+  options: ApiOptions,
+): Promise<void> {
+  await sendJson(`/api/team-profiles/${encodeURIComponent(profileId)}`, 'DELETE', {
+    expected_version: expectedVersion,
+  }, options);
+}
+
+export async function retryTeamMember(
+  room: string,
+  handle: string,
+  options: ApiOptions,
+): Promise<Member> {
+  return sendJson<Member>(`/api/rooms/${encodeURIComponent(room)}/team/retry`, 'POST', {
+    handle,
+  }, options);
 }
 // harn:end channel-accent-projects-accessibly-across-themes
 // harn:end web-room-rail-creates-owner-room

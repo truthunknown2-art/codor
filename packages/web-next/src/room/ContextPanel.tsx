@@ -1,4 +1,5 @@
-import type { AgentLimit, AgentTaskList, AgentTaskStatus, Member, Policy, Room, ThinkingLevel, WireEvent } from '@codor/protocol';
+import type { AgentLimit, AgentTaskList, AgentTaskStatus, BillingMode, Member, MemberAccent, Policy, Room, TeamProfile, ThinkingLevel, WireEvent } from '@codor/protocol';
+import { deriveRoomId } from '@codor/protocol';
 import {
   Bot,
   ChevronRight,
@@ -14,13 +15,14 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
+  Save,
   Square,
   X,
   Zap,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { artifactUrl, fetchArtifacts, fetchRunEvents, refreshUsage, type AdapterRegistration, type ArtifactFeed, type MemberDetail } from '@runtime/api.js';
+import { artifactUrl, fetchArtifacts, fetchRunEvents, fetchTeamProfiles, refreshUsage, retryTeamMember, saveCurrentTeamProfile, type AdapterRegistration, type ArtifactFeed, type MemberDetail } from '@runtime/api.js';
 import { formatAttachmentSize, isImageAttachment, useAttachmentDownload, useAttachmentObjectUrl } from './attachments.js';
 import { AgentControls, AgentIdentityControls, RolePresetControls, Section } from './AgentControls.js';
 import { FolderPicker } from './FolderPicker.js';
@@ -103,6 +105,9 @@ function MembersTab(props: { room: string; token: () => string; connection: Conn
   const details = useMemberDetails(props.room, props.token);
   const adapterCatalog = useAdapterCatalog(props.token);
   const [spawning, setSpawning] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [retrying, setRetrying] = useState<string>();
+  const [teamError, setTeamError] = useState<string>();
   // Manual usage refresh: coalesce repeat clicks while one is in flight, and
   // surface a concise error without disturbing the last-good gauges (updated
   // gauges arrive as member frames).
@@ -199,6 +204,15 @@ function MembersTab(props: { room: string; token: () => string; connection: Conn
             onClick={refreshUsageLimits}
           />
           <IconButton
+            icon={Save}
+            label="Save team profile"
+            size="sm"
+            variant="quiet"
+            data-testid="save-team-profile"
+            disabled={!canManage || roster.every((member) => member.kind !== 'agent')}
+            onClick={() => setSavingProfile(true)}
+          />
+          <IconButton
             icon={Plus}
             label="Spawn agent"
             size="sm"
@@ -210,6 +224,36 @@ function MembersTab(props: { room: string; token: () => string; connection: Conn
       </div>
       {usageError !== undefined && (
         <p className="nx-usage-error" role="alert" data-testid="usage-refresh-error">{usageError}</p>
+      )}
+      {room?.config.team_setup !== undefined && (
+        <div className="nx-agent-panel" data-testid="team-setup-status">
+          <strong>{room.config.team_setup.ready ? 'Team ready' : 'Team needs attention'}</strong>
+          {room.config.team_setup.members.map((result) => (
+            <p key={result.handle} className="nx-field-note">
+              @{result.handle}: {result.status}
+              {result.error !== undefined ? ` Â· ${result.error}` : ''}
+              {result.status === 'failed' && canManage && (
+                <Button
+                  variant="quiet"
+                  type="button"
+                  disabled={retrying !== undefined}
+                  onClick={() => {
+                    setRetrying(result.handle);
+                    setTeamError(undefined);
+                    void retryTeamMember(props.room, result.handle, { token: props.token() }).catch(
+                      (failure: unknown) => setTeamError(
+                        failure instanceof Error ? failure.message : String(failure),
+                      ),
+                    ).finally(() => setRetrying(undefined));
+                  }}
+                >
+                  {retrying === result.handle ? 'Retryingâ€¦' : 'Retry'}
+                </Button>
+              )}
+            </p>
+          ))}
+          {teamError !== undefined && <p className="nx-field-note is-error" role="alert">{teamError}</p>}
+        </div>
       )}
       <ul className="nx-roster">
         {roster.map((member) => (
@@ -247,7 +291,135 @@ function MembersTab(props: { room: string; token: () => string; connection: Conn
           }}
         />
       )}
+      {savingProfile && (
+        <SaveTeamProfileDialog
+          room={props.room}
+          token={props.token}
+          agents={roster.filter((member) => member.kind === 'agent')}
+          defaultCoordinator={room?.config.starting_agent_handle}
+          onClose={() => setSavingProfile(false)}
+        />
+      )}
     </div>
+  );
+}
+
+function SaveTeamProfileDialog(props: {
+  room: string;
+  token: () => string;
+  agents: Member[];
+  defaultCoordinator?: string;
+  onClose: () => void;
+}) {
+  const [profiles, setProfiles] = useState<TeamProfile[]>([]);
+  const [existingId, setExistingId] = useState('');
+  const [name, setName] = useState('');
+  const [id, setId] = useState('');
+  const [coordinator, setCoordinator] = useState(
+    props.agents.some((agent) => agent.handle === props.defaultCoordinator)
+      ? props.defaultCoordinator!
+      : props.agents[0]?.handle ?? '',
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    let current = true;
+    void fetchTeamProfiles({ token: props.token() }).then(
+      (items) => { if (current) setProfiles(items); },
+      (failure: unknown) => {
+        if (current) setError(failure instanceof Error ? failure.message : String(failure));
+      },
+    );
+    return () => { current = false; };
+  }, [props.token]);
+
+  const existing = profiles.find((profile) => profile.id === existingId);
+  const submit = (event: { preventDefault: () => void }): void => {
+    event.preventDefault();
+    if (busy || name.trim() === '' || id.trim() === '' || coordinator === '') return;
+    setBusy(true);
+    setError(undefined);
+    void saveCurrentTeamProfile({
+      room: props.room,
+      id: id.trim(),
+      name: name.trim(),
+      coordinator_handle: coordinator,
+      expected_version: existing?.version ?? 0,
+    }, { token: props.token() }).then(
+      props.onClose,
+      (failure: unknown) => setError(failure instanceof Error ? failure.message : String(failure)),
+    ).finally(() => setBusy(false));
+  };
+
+  return (
+    <Modal label="Save team profile" onClose={props.onClose} testid="save-team-profile-dialog" structured>
+      <form onSubmit={submit}>
+        <div className="nx-dialog-head">
+          <div>
+            <h2 className="nx-dialog-title">Save current team</h2>
+            <p className="nx-dialog-sub">Reusable on this computer and paired phones. No sessions, folders, or credentials are saved.</p>
+          </div>
+          <button type="button" className="nx-dialog-close" aria-label="Close save team profile" onClick={props.onClose}>
+            <X size={16} aria-hidden="true" />
+          </button>
+        </div>
+        <div className="nx-dialog-body">
+          <label className="nx-field">
+            <span className="nx-label">Replace existing <span className="nx-opt">Â· optional</span></span>
+            <select
+              value={existingId}
+              onChange={(event) => {
+                const profile = profiles.find((candidate) => candidate.id === event.target.value);
+                setExistingId(event.target.value);
+                if (profile !== undefined) {
+                  setId(profile.id);
+                  setName(profile.name);
+                  if (props.agents.some((agent) => agent.handle === profile.coordinator_handle)) {
+                    setCoordinator(profile.coordinator_handle);
+                  }
+                } else {
+                  setId('');
+                  setName('');
+                }
+              }}
+            >
+              <option value="">Create new profile</option>
+              {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+            </select>
+          </label>
+          <label className="nx-field">
+            <span className="nx-label">Name</span>
+            <input
+              value={name}
+              required
+              onChange={(event) => {
+                setName(event.target.value);
+                if (existingId === '') setId(deriveRoomId(event.target.value));
+              }}
+            />
+          </label>
+          <label className="nx-field">
+            <span className="nx-label">Profile id</span>
+            <input value={id} required disabled={existingId !== ''} onChange={(event) => setId(event.target.value)} />
+          </label>
+          <label className="nx-field">
+            <span className="nx-label">Coordinator</span>
+            <select value={coordinator} onChange={(event) => setCoordinator(event.target.value)}>
+              {props.agents.map((agent) => <option key={agent.id} value={agent.handle}>@{agent.handle}</option>)}
+            </select>
+          </label>
+          <p className="nx-field-note">{props.agents.length} agents will be saved; all are required.</p>
+          {error !== undefined && <p className="nx-field-note is-error" role="alert">{error}</p>}
+        </div>
+        <div className="nx-dialog-actions">
+          <Button variant="quiet" type="button" onClick={props.onClose}>Cancel</Button>
+          <Button variant="primary" type="submit" disabled={busy || props.agents.length === 0}>
+            {busy ? 'Savingâ€¦' : existing === undefined ? 'Save profile' : 'Update profile'}
+          </Button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -837,6 +1009,9 @@ function ConfigureDialog(props: {
     model?: string | null;
     thinking?: ThinkingLevel | null;
     policy?: Policy;
+    purpose?: string | null;
+    accent?: MemberAccent | null;
+    billing_mode?: BillingMode;
   }) => void;
 }) {
   // Same control as spawn and channel-create, with the harness locked: an existing
@@ -854,6 +1029,9 @@ function ConfigureDialog(props: {
     thinking: props.member.thinking ?? '',
     policy: asPolicy(props.member.policy),
   });
+  const [purpose, setPurpose] = useState(props.member.purpose ?? '');
+  const [accent, setAccent] = useState<MemberAccent>(memberAccent(props.member));
+  const [billingMode, setBillingMode] = useState<BillingMode>(props.member.billing_mode ?? 'unknown');
 
   const submit = (event: { preventDefault: () => void }) => {
     event.preventDefault();
@@ -866,6 +1044,9 @@ function ConfigureDialog(props: {
       ...(!isAcp && { model: config.model === '' ? null : config.model }),
       thinking: supportedThinking(adapter, config.thinking) ?? null,
       ...(config.policy !== '' && { policy: config.policy }),
+      purpose: purpose.trim() === '' ? null : purpose.trim(),
+      accent,
+      billing_mode: billingMode,
     });
     props.onClose();
   };
@@ -893,6 +1074,28 @@ function ConfigureDialog(props: {
           permissionsSection={2}
           idPrefix="configure"
         />
+        <Section n={3} title="Identity & purpose">
+          <label className="nx-field">
+            <span className="nx-label">Purpose</span>
+            <textarea data-testid="configure-purpose" value={purpose} rows={4} maxLength={10_000} onChange={(event) => setPurpose(event.target.value)} />
+          </label>
+          <label className="nx-field">
+            <span className="nx-label">Accent</span>
+            <select data-testid="configure-accent" value={accent} onChange={(event) => setAccent(event.target.value)}>
+              <option value="indigo">Indigo</option>
+              <option value="green">Green</option>
+              <option value="violet">Violet</option>
+            </select>
+          </label>
+          <label className="nx-field">
+            <span className="nx-label">Billing</span>
+            <select data-testid="configure-billing" value={billingMode} onChange={(event) => setBillingMode(event.target.value as BillingMode)}>
+              <option value="subscription">Subscription</option>
+              <option value="api">API</option>
+              <option value="unknown">Unknown</option>
+            </select>
+          </label>
+        </Section>
         </div>
         <div className="nx-dialog-actions">
           <Button variant="quiet" type="button" onClick={props.onClose}>Cancel</Button>

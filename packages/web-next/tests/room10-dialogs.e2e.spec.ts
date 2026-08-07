@@ -610,3 +610,53 @@ test.describe('accessibility', () => {
     await expect(page.getByText('phonemade').first()).toBeVisible();
   });
 });
+
+test.describe('team profiles', () => {
+  test('a phone creates a complete team from one saved profile and sees readiness', async ({ page }) => {
+    const auth = { authorization: 'Bearer next-e2e-token' };
+    const existingMembers = await page.request.get('/api/rooms/eng/members', { headers: auth });
+    const existing = await existingMembers.json() as {
+      members: { member: { kind: string; cwd?: string } }[];
+    };
+    const cwd = existing.members.find((entry) => entry.member.kind === 'agent')?.member.cwd;
+    expect(cwd).toBeDefined();
+
+    const saved = await page.request.post('/api/team-profiles', {
+      headers: auth,
+      data: {
+        expected_version: 0,
+        profile: {
+          id: 'phone-team', name: 'Phone team', coordinator_handle: 'planner',
+          members: [
+            {
+              handle: 'planner', display_name: 'Planner', harness: 'fake', purpose: 'Coordinate',
+              policy: 'workspace-write', accent: 'violet', billing_mode: 'subscription', required: true,
+            },
+            {
+              handle: 'coder', display_name: 'Coder', harness: 'fake', purpose: 'Implement',
+              policy: 'workspace-write', accent: 'indigo', billing_mode: 'subscription', required: true,
+            },
+          ],
+        },
+      },
+    });
+    expect(saved.ok()).toBe(true);
+
+    await page.setViewportSize({ width: 320, height: 720 });
+    await openRoom(page);
+    await page.getByTestId('mobile-back').click();
+    await page.getByTestId('create-room').click();
+    const dialog = page.getByTestId('create-channel-dialog');
+    await dialog.getByTestId('create-name').fill('Profile Phone');
+    await dialog.getByTestId('create-folder-typed').fill(cwd!);
+    await dialog.getByTestId('create-team-profile').selectOption('phone-team');
+    await expect(dialog.getByTestId('create-team-profile-summary')).toContainText('@planner');
+    await dialog.getByTestId('create-go').click();
+
+    await expect(page).toHaveURL(/room=profile-phone/, { timeout: 15_000 });
+    await page.getByTestId('mobile-kebab').click();
+    await expect(page.getByTestId('team-setup-status')).toContainText('Team ready');
+    await expect(page.getByTestId('member-planner')).toBeVisible();
+    await expect(page.getByTestId('member-coder')).toBeVisible();
+  });
+});

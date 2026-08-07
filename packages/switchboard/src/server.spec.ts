@@ -1363,6 +1363,63 @@ describe('REST', () => {
   });
 });
 
+describe('team profile API', () => {
+  it('creates, edits, lists, captures the current team, and deletes profiles', async () => {
+    const headers = {
+      authorization: `Bearer ${TOKEN}`,
+      'content-type': 'application/json',
+    };
+    const input = {
+      id: 'production', name: 'Production', coordinator_handle: 'planner',
+      members: [{
+        handle: 'planner', display_name: 'Planner', harness: 'fake', purpose: 'Coordinate',
+        policy: 'workspace-write', accent: 'violet', billing_mode: 'subscription', required: true,
+      }],
+    };
+    const created = await fetch(`${base}/api/team-profiles`, {
+      method: 'POST', headers, body: JSON.stringify({ profile: input, expected_version: 0 }),
+    });
+    expect(created.status).toBe(200);
+    expect(await created.json()).toMatchObject({ id: 'production', version: 1 });
+
+    const edited = await fetch(`${base}/api/team-profiles`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ profile: { ...input, name: 'Production team' }, expected_version: 1 }),
+    });
+    expect(edited.status).toBe(200);
+    expect(await edited.json()).toMatchObject({ name: 'Production team', version: 2 });
+
+    const planner = daemon.spawnMember('eng', {
+      harness: 'fake', handle: 'planner', cwd: testCwd(), purpose: 'Plan',
+      policy: 'workspace-write', accent: 'green', billing_mode: 'subscription',
+    });
+    const captured = await fetch(`${base}/api/team-profiles/from-room`, {
+      method: 'POST', headers,
+      body: JSON.stringify({
+        room: 'eng', id: 'captured', name: 'Captured', coordinator_handle: planner.handle,
+        expected_version: 0,
+      }),
+    });
+    expect(captured.status).toBe(200);
+    expect(await captured.json()).toMatchObject({
+      id: 'captured', coordinator_handle: 'planner',
+      members: [{ handle: 'planner', purpose: 'Plan', billing_mode: 'subscription' }],
+    });
+
+    const listed = await fetch(`${base}/api/team-profiles`, { headers: { authorization: `Bearer ${TOKEN}` } });
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toMatchObject({
+      profiles: [{ id: 'captured' }, { id: 'production', version: 2 }],
+    });
+
+    const removed = await fetch(`${base}/api/team-profiles/production`, {
+      method: 'DELETE', headers, body: JSON.stringify({ expected_version: 2 }),
+    });
+    expect(removed.status).toBe(204);
+    expect(daemon.store.getTeamProfile('production')).toBeUndefined();
+  });
+});
+
 describe('WebSocket', () => {
   it('lists durable team profiles and hydrates then streams project state', async () => {
     daemon.store.saveTeamProfile({

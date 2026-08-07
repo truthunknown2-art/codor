@@ -1,6 +1,6 @@
 # Milestone 1: Production team workflow
 
-Status: approved; Work Package 1 complete; Work Package 2 implementation and local verification complete
+Status: approved; Work Packages 1-2 complete; Work Package 3 implementation and local verification complete
 Upstream baseline: `rjx18/codor@3b587c75cc02a9580ffbdaaafc217fc4d12d8cf5`
 Fork: `truthunknown2-art/codor`
 Production boundary: port `8137` and `C:\Users\pbirc\.codor` must remain untouched until final acceptance.
@@ -101,7 +101,8 @@ optimistic-version conflicts, cold/warm synchronization, and backward defaults.
 Completion: schemas, SQLite persistence, and live project frames are
 review-clean.
 
-WP2 result (2026-08-06): implementation and local verification complete. The
+WP2 result (2026-08-06): complete and merged in PR #3 at
+`6a7eae59490edbef761690c2a154daa405c152d5`. The
 protocol now defines bounded project documents, reusable team profiles,
 member accent/billing metadata, project change-log entries, and project/profile
 sync frames. SQLite persists one versioned project per room, versioned global
@@ -137,6 +138,31 @@ provider validation, partial-spawn failure, retry, and mobile channel creation.
 
 Completion: a new channel can select a profile and visibly reach team-ready
 state.
+
+WP3 result (2026-08-06): implementation and local verification complete. Team
+profiles can be created, updated from a current channel, listed, deleted, and
+selected during channel creation. One channel working directory is applied to
+every profile member. Required-member failures remain visible in durable room
+state with bounded Retry controls; readiness stays false until every required
+member is live. Existing agents can change purpose, accent, and declared billing
+mode without respawning, and the saved purpose is included in the next roster
+briefing. Profiles contain no credentials, sessions, working directories, or
+custom ACP commands; unavailable harnesses/providers fail before persistence.
+
+Verification evidence:
+
+- Protocol, Switchboard, and production web builds passed.
+- Protocol schemas passed 196/196 tests; Switchboard server/API passed 108/108
+  with two existing platform skips; store persistence passed 86/86.
+- The focused partial-failure/retry, unavailable-provider, and live-metadata
+  daemon regressions passed 3/3. A broader daemon run again exposed only the
+  inherited Windows artifact-snapshot exceptions recorded under WP1 after the
+  new assertion wording was corrected.
+- The complete web source suite passed 437/437 tests.
+- An isolated 320px browser journey created a two-agent channel from a saved
+  profile, showed both members, and reported `Team ready`; the focused dark/light
+  create-dialog accessibility gate also passed.
+- Production port 8137 and `C:\Users\pbirc\.codor` were not modified or restarted.
 
 ### WP4 - Canonical project board
 
