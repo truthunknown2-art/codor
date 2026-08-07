@@ -57,7 +57,14 @@ export type {
 } from './adapter-registry.js';
 export { REDACTED, redactText, redactValue } from './redact.js';
 export { startServer } from './server.js';
-export type { RunningServer, ServerOptions } from './server.js';
+export type {
+  RunningServer,
+  ServerOptions,
+  UpdateBlocker,
+  UpdateController,
+  UpdateStartResult,
+  UpdateStatus,
+} from './server.js';
 export { isPipePath, localSocketPath } from './local-socket.js';
 export { RelayStore, DEFAULT_RELAY_URL } from './relay/store.js';
 export type { RelayRecord, RelayDeviceRecord } from './relay/store.js';

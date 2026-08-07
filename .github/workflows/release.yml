@@ -15,7 +15,7 @@ concurrency:
 jobs:
   publish:
     name: Verify and publish tagged release
-    if: github.repository == 'rjx18/codor'
+    if: github.repository == 'rjx18/codor' || github.repository == 'truthunknown2-art/codor'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
@@ -44,6 +44,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install trusted-publishing npm CLI
+        if: github.repository == 'rjx18/codor'
         run: npm install --global npm@11.19.0
 
       - name: Validate tag, version, ancestry, and uniqueness
@@ -93,18 +94,20 @@ jobs:
             exit 1
           fi
 
-          NPM_ERROR="$(mktemp)"
-          if npm view "@richhardry/codor@$RELEASE_VERSION" version --json >"$NPM_ERROR" 2>&1; then
-            printf 'npm version already exists: %s\n' "$RELEASE_VERSION" >&2
-            cat "$NPM_ERROR" >&2
+          if [[ "$GITHUB_REPOSITORY" == "rjx18/codor" ]]; then
+            NPM_ERROR="$(mktemp)"
+            if npm view "@richhardry/codor@$RELEASE_VERSION" version --json >"$NPM_ERROR" 2>&1; then
+              printf 'npm version already exists: %s\n' "$RELEASE_VERSION" >&2
+              cat "$NPM_ERROR" >&2
+              rm -f "$NPM_ERROR"
+              exit 1
+            elif ! grep -Eiq 'E404|not found|no match' "$NPM_ERROR"; then
+              cat "$NPM_ERROR" >&2
+              rm -f "$NPM_ERROR"
+              exit 1
+            fi
             rm -f "$NPM_ERROR"
-            exit 1
-          elif ! grep -Eiq 'E404|not found|no match' "$NPM_ERROR"; then
-            cat "$NPM_ERROR" >&2
-            rm -f "$NPM_ERROR"
-            exit 1
           fi
-          rm -f "$NPM_ERROR"
 
           GH_ERROR="$(mktemp)"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >"$GH_ERROR" 2>&1; then
@@ -138,9 +141,13 @@ jobs:
 
       - name: Build and inspect immutable release artifacts
         run: scripts/package-release-artifacts.sh "$RUNNER_TEMP/codor-release-artifacts"
+        env:
+          CODOR_PACKAGE_REPOSITORY_URL: https://github.com/${{ github.repository }}
 
       - name: Verify checksums and exact artifact identities
         shell: bash
+        env:
+          CODOR_PACKAGE_REPOSITORY_URL: https://github.com/${{ github.repository }}
         run: |
           set -Eeuo pipefail
           OUT_DIR="$RUNNER_TEMP/codor-release-artifacts"
@@ -156,7 +163,7 @@ jobs:
           const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
           if (manifest.name !== '@richhardry/codor' ||
               manifest.version !== expectedVersion ||
-              manifest.repository?.url !== 'https://github.com/rjx18/codor') {
+              manifest.repository?.url !== process.env.CODOR_PACKAGE_REPOSITORY_URL) {
             throw new Error('release TGZ manifest identity check failed');
           }
           NODE
@@ -171,6 +178,7 @@ jobs:
           NODE
 
       - name: Publish the exact public TGZ through npm OIDC
+        if: github.repository == 'rjx18/codor'
         run: npm publish "$RUNNER_TEMP/codor-release-artifacts/richhardry-codor-${RELEASE_VERSION}.tgz" --access public --tag "$NPM_TAG" --provenance
 
       - name: Create the permanent GitHub Release
@@ -185,7 +193,7 @@ jobs:
             "$OUT_DIR/codor-copilot-bridge-${RELEASE_VERSION}.vsix"
             "$OUT_DIR/SHA256SUMS"
           )
-          ARGS=(--repo "$GITHUB_REPOSITORY" --verify-tag --title "$GITHUB_REF_NAME" --generate-notes)
+          ARGS=(--repo "$GITHUB_REPOSITORY" --verify-tag --target "$GITHUB_SHA" --title "$GITHUB_REF_NAME" --generate-notes)
           if [[ "$RELEASE_KIND" == alpha ]]; then
             ARGS+=(--prerelease)
           fi

@@ -160,7 +160,7 @@ assert.match(manual, /Once that version is published or\s*installed, its filenam
 assert.match(manual, /advance the\s*release version before rebuilding or sending it/);
 assert.match(manual, /explicitly withdraw and replace a candidate at the same version only after\s*confirming it was not published or installed/);
 assert.match(manual, /Treat every previously transferred copy as invalid/);
-assert.equal(rootManifest.version, '0.10.10', 'the release candidate must advance to 0.10.10');
+assert.equal(rootManifest.version, '0.10.11', 'the release candidate must advance to 0.10.11');
 const legacyPackageVersions = new Set([
   'packages/adapters/grok/package.json',
   'packages/tunnel/package.json',
@@ -176,7 +176,7 @@ for (const path of tracked.filter((candidate) => candidate.endsWith('package.jso
   }
 }
 const acpAdapterSource = await readFile(new URL('../packages/adapters/acp/src/adapter.ts', import.meta.url), 'utf8');
-assert.match(acpAdapterSource, /clientInfo:\s*\{\s*name: 'Codor', version: '0\.10\.10'/);
+assert.match(acpAdapterSource, /clientInfo:\s*\{\s*name: 'Codor', version: '0\.10\.11'/);
 // harn:end installed-or-published-release-artifacts-are-version-immutable
 
 // harn:assume switchboard-static-serving-dependency-is-security-patched ref=patched-fastify-static-release-audit
@@ -298,7 +298,7 @@ assert.match(releaseWorkflow, /gh release view/);
 assert.match(releaseWorkflow, /npm publish[\s\S]*--access public[\s\S]*--tag/);
 assert.match(releaseWorkflow, /--provenance/);
 assert.match(releaseWorkflow, /gh release create/);
-assert.match(releaseWorkflow, /ARGS=\(--repo "\$GITHUB_REPOSITORY" --verify-tag --title/);
+assert.match(releaseWorkflow, /ARGS=\(--repo "\$GITHUB_REPOSITORY" --verify-tag --target "\$GITHUB_SHA" --title/);
 assert.doesNotMatch(releaseWorkflow, /--verify-tag\s+"\$GITHUB_REF_NAME"/);
 assert.match(releaseWorkflow, /--prerelease/);
 assert.match(releaseWorkflow, /SHA256SUMS/);

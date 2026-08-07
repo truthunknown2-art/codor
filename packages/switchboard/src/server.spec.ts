@@ -26,7 +26,7 @@ import { FakeAdapter } from './fake-adapter.js';
 import { LedgerManager } from './ledger/watch.js';
 import { isPipePath, localSocketPath } from './local-socket.js';
 import { PushSubscriptionStore } from './push/subscriptions.js';
-import { type RunningServer, startServer } from './server.js';
+import { type RunningServer, type UpdateController, startServer } from './server.js';
 
 const TOKEN = 'test-token-123';
 const ADMIN_TOKEN = 'admin-token-123';
@@ -44,6 +44,8 @@ let admin: Member;
 let member: Member;
 let observer: Member;
 let fakeInstalled: boolean;
+let updateStarted: boolean;
+let update: UpdateController;
 
 const testCwd = (name = 'work') => {
   const path = join(dir, 'cwd', name);
@@ -70,6 +72,14 @@ const spawnAgentWithToken = (handle: string, room = 'eng') => {
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'codor-server-'));
   fakeInstalled = true;
+  updateStarted = false;
+  update = {
+    status: async () => ({ supported: true, current_version: '0.11.0', state: 'idle', blockers: [] }),
+    start: async () => {
+      updateStarted = true;
+      return { accepted: true, version: '0.11.1', sha: 'a'.repeat(40), tag: 'v0.11.1' };
+    },
+  };
   fake = new FakeAdapter('fake', { interactiveAttach: true });
   Object.assign(fake, { executable: 'fake' });
   daemon = new Daemon({
@@ -105,8 +115,27 @@ beforeEach(async () => {
     pushSubscriptions,
     homeDir: dir,
     systemHostname: `  Work Station / East ${'x'.repeat(80)}  `,
+    update,
   });
   base = `http://127.0.0.1:${server.port}`;
+});
+
+describe('safe update API', () => {
+  it('is owner-only and starts the host updater', async () => {
+    const denied = await fetch(`${base}/api/update`, { headers: { authorization: `Bearer ${OBSERVER_TOKEN}` } });
+    expect(denied.status).toBe(403);
+
+    const status = await fetch(`${base}/api/update`, { headers: { authorization: `Bearer ${TOKEN}` } });
+    expect(await status.json()).toMatchObject({ supported: true, current_version: '0.11.0', blockers: [] });
+
+    const started = await fetch(`${base}/api/update`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(started.status).toBe(202);
+    expect(updateStarted).toBe(true);
+  });
 });
 
 // harn:assume agent-member-credentials-stay-secret ref=agent-principal-resolution-regression

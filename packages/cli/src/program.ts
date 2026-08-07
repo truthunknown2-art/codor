@@ -774,6 +774,23 @@ export function createProgram(context: CliContext = {}): Command {
   // harn:end setup-unattended-mutation-requires-explicit-intent
 
   program
+    .command('update')
+    .description('install the latest verified TruthUnknown Codor release when every agent is idle')
+    .option('--tag <tag>', 'install one exact release tag instead of the latest release')
+    .action(async (options: { tag?: string }) => {
+      const result = await postJson('/api/update', options.tag === undefined ? {} : { tag: options.tag }) as {
+        accepted?: boolean;
+        version?: string;
+        sha?: string;
+        tag?: string;
+      };
+      if (result.accepted !== true || result.version === undefined || result.sha === undefined) {
+        throw new Error('the switchboard did not accept the update');
+      }
+      out(`update accepted\t${result.version}\t${result.sha}\t${result.tag ?? ''}`);
+    });
+
+  program
     .command('spawn')
     .requiredOption('-r, --channel <channel>', 'channel id')
     .requiredOption('--harness <harness>', 'registered adapter id')

@@ -20,6 +20,7 @@ case "$OUT_DIR" in
 esac
 
 VERSION="$(cd "$ROOT" && node -p "JSON.parse(require('node:fs').readFileSync('package.json', 'utf8')).version")"
+PACKAGE_REPOSITORY_URL="${CODOR_PACKAGE_REPOSITORY_URL:-https://github.com/rjx18/codor}"
 TGZ_NAME="richhardry-codor-$VERSION.tgz"
 VSIX_NAME="codor-copilot-bridge-$VERSION.vsix"
 EXTENSION_DIR="$ROOT/packages/adapters/copilot/vscode-extension"
@@ -72,14 +73,14 @@ test -s "$OUT_DIR/$VSIX_NAME"
 
 INSPECT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/codor-release-artifacts.XXXXXX")"
 tar -xzf "$OUT_DIR/$TGZ_NAME" -C "$INSPECT_DIR"
-node --input-type=module - "$INSPECT_DIR/package/package.json" "$VERSION" <<'NODE'
+node --input-type=module - "$INSPECT_DIR/package/package.json" "$VERSION" "$PACKAGE_REPOSITORY_URL" <<'NODE'
 import { readFileSync } from 'node:fs';
 
-const [manifestPath, expectedVersion] = process.argv.slice(2);
+const [manifestPath, expectedVersion, expectedRepository] = process.argv.slice(2);
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
 if (manifest.name !== '@richhardry/codor') throw new Error('staged TGZ has the wrong public name');
 if (manifest.version !== expectedVersion) throw new Error('staged TGZ has the wrong version');
-if (manifest.repository?.url !== 'https://github.com/rjx18/codor') {
+if (manifest.repository?.url !== expectedRepository) {
   throw new Error('staged TGZ has the wrong repository URL');
 }
 if (manifest.private !== undefined) throw new Error('staged TGZ must not remain private');

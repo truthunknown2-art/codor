@@ -222,7 +222,10 @@ export function buildArtifact(options: BuildArtifactOptions): BuildArtifactResul
     engines: { node: '>=22.12.0' },
     publishConfig: { access: 'public' },
     // harn:assume github-tags-publish-one-immutable-alpha-or-stable-release ref=public-package-repository-identity
-    repository: { type: 'git', url: 'https://github.com/rjx18/codor' },
+    repository: {
+      type: 'git',
+      url: process.env.CODOR_PACKAGE_REPOSITORY_URL ?? 'https://github.com/rjx18/codor',
+    },
     // harn:end github-tags-publish-one-immutable-alpha-or-stable-release
     dependencies: {
       ...Object.fromEntries(closure.map((name) => [name, versions.get(name) ?? ''])),
