@@ -174,7 +174,7 @@ export const MemberSchema = z
     handle: HandleSchema,
     display_name: z.string(),
     accent: MemberAccentSchema.optional(),
-    billing_mode: BillingModeSchema.default('unknown'),
+    billing_mode: BillingModeSchema.optional(),
     // harn:assume member-purpose-protocol-metadata ref=member-purpose-field
     purpose: z.string().optional(),
     // harn:end member-purpose-protocol-metadata

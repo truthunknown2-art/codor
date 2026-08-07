@@ -204,6 +204,12 @@ describe('members', () => {
     expect(parsed.thinking).toBeUndefined();
   });
 
+  it('keeps billing mode additive for older member literals', () => {
+    expect(MemberSchema.parse(agent).billing_mode).toBeUndefined();
+    expect(MemberSchema.parse({ ...agent, billing_mode: 'subscription' }).billing_mode)
+      .toBe('subscription');
+  });
+
   it('rejects a thinking level the protocol does not define', () => {
     expect(() => MemberSchema.parse({ ...agent, thinking: 'extreme' })).toThrow();
   });

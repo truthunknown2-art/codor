@@ -113,8 +113,8 @@ their later work packages.
 Verification evidence:
 
 - Protocol and Switchboard TypeScript builds passed.
-- Protocol, store, and server regression suites passed 385/385 tests with two
-  existing platform skips.
+- Protocol, store, server, and affected web-state regression suites passed
+  411/411 tests with two existing platform skips.
 - Focused daemon project-frame verification passed 1/1.
 - Migration coverage removes the new member columns from a populated current
   database, reopens it, and proves the honest `billing_mode: unknown` default.

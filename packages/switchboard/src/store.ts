@@ -1653,7 +1653,7 @@ export class Store {
   // ── members ───────────────────────────────────────────────────────────
 
   private insertMember(room: string, member: NewMember): Member {
-    const validated = MemberSchema.parse({ id: this.newUlid(), ...member });
+    const validated = MemberSchema.parse({ id: this.newUlid(), billing_mode: 'unknown', ...member });
     // harn:assume named-acp-provider-selection-resolves-to-private-structured-launch ref=acp-provider-storage
     // The safe public provider id is persisted with the other member identity columns.
     // The exact launch is written privately (addMember) and never appears here.
@@ -1671,7 +1671,7 @@ export class Store {
         validated.handle,
         validated.display_name,
         orNull(validated.accent),
-        validated.billing_mode,
+        validated.billing_mode ?? 'unknown',
         orNull(validated.purpose),
         orNull(validated.harness),
         orNull(validated.session_ref),
@@ -1899,7 +1899,7 @@ export class Store {
           merged.handle,
           merged.display_name,
           orNull(merged.accent),
-          merged.billing_mode,
+          merged.billing_mode ?? 'unknown',
           orNull(merged.purpose),
           orNull(merged.harness),
           orNull(merged.session_ref),
