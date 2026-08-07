@@ -1,6 +1,6 @@
 # Milestone 1: Production team workflow
 
-Status: approved; Work Packages 1-3 complete; Work Package 4 implementation and local verification complete
+Status: approved; Work Packages 1-4 complete; Work Package 5 implementation and local verification complete
 Upstream baseline: `rjx18/codor@3b587c75cc02a9580ffbdaaafc217fc4d12d8cf5`
 Fork: `truthunknown2-art/codor`
 Production boundary: port `8137` and `C:\Users\pbirc\.codor` must remain untouched until final acceptance.
@@ -180,7 +180,8 @@ CLI.
 Completion: the responsive header Board view and `codor project` commands use
 the same live state.
 
-WP4 result (2026-08-06): implementation and local verification complete. One
+WP4 result (2026-08-06): complete and merged in PR #5 at
+`91e0170b171ba923d414939ebd1d0b90c9f1eae5`. One
 versioned project per channel is now mutable through a server-side authorization
 and transition reducer. Owners can override, coordinators control structure,
 assignees submit or block, and every listed gatekeeper must approve before a
@@ -222,6 +223,38 @@ latch, human/block stops, and brake holds.
 
 Completion: a planner can assign, review, revise, and close a multi-agent
 project without manual tagging.
+
+WP5 result (2026-08-06): implementation and local verification complete.
+Ready assigned tasks now create one durable, task-linked delivery through the
+existing inbox WAL. Turn admission marks work in progress; successful terminal
+results attach message evidence, dispatch every configured review gate, and
+return to the coordinator without requiring an agent-authored mention. Rejected
+revisions and newly unlocked assigned dependencies dispatch once. Project-linked
+collaboration rounds return their barrier aggregate to the original assignee
+before review, while ordinary non-project routing remains unchanged.
+
+Guarded continuation is stored in the project document and uses ordinary
+deliveries, so the existing turn/spend brakes remain authoritative. A
+coordinator receives at most one nudge for an unchanged actionable board; a
+second non-advancing response disables guarded autopilot and surfaces attention.
+Blocked, inactive, completed, or still-agent-active work does not self-loop.
+Project task prompts explicitly prohibit hidden Goal/CreateGoal continuation
+state and keep long-running truth in the board, Git, and visible messages.
+
+Verification evidence:
+
+- Protocol and Switchboard TypeScript builds passed.
+- Protocol schema, project reducer, and store suites passed 286/286 tests.
+- The focused guarded-project daemon suite passed 5/5: restart-safe exactly-once
+  assignment, mentionless result/review return, rejection and revision
+  redispatch, dependency release, one-nudge/two-response pause, exact failure
+  blocking, configured brake hold, and task-linked collaboration-barrier return.
+- The broader affected run passed 561 tests. Its only eight failures were the
+  same inherited Windows artifact-snapshot path exceptions recorded under WP1;
+  no WP5 assertion failed.
+- No second scheduler or hidden agent continuation engine was added; dispatch,
+  recovery, and brakes reuse the existing SQLite delivery lifecycle.
+- Production port 8137 and `C:\Users\pbirc\.codor` were not modified or restarted.
 
 ### WP6 - Context continuity and failure recovery
 

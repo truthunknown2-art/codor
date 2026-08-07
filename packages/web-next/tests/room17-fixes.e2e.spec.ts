@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
 const ENG = '/?room=eng&token=next-e2e-token';
+const INBOX = '/?room=inbox&token=next-e2e-token';
 const TRASH = '/?room=trash&token=next-e2e-token';
 const CONTROL = `http://127.0.0.1:${process.env.CODOR_NEXT_E2E_CONTROL_PORT ?? '28138'}`;
 
@@ -83,7 +84,11 @@ test.describe('mention highlight', () => {
 
 test.describe('inbox relevance', () => {
   test('mark-all-read empties the inbox', async ({ page }) => {
-    await openRoom(page, ENG);
+    await page.addInitScript(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+      Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => false });
+    });
+    await openRoom(page, INBOX);
     await page.getByTestId('inbox-toggle').click();
     await expect(page.getByTestId('inbox-panel')).toBeVisible();
 

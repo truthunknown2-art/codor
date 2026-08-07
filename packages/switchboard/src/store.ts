@@ -1386,6 +1386,12 @@ export interface AtomicRoutedMessage {
   collaboration?: CollaborationRoundProjection;
 }
 
+export interface AtomicProjectDispatch {
+  project: ProjectDocument;
+  message: Message;
+  deliveries: Delivery[];
+}
+
 export type CollaborationRoundRelease = {
   status: 'pending' | 'released' | 'closed' | 'already_released';
   deliveries: Delivery[];
@@ -1591,6 +1597,39 @@ export class Store {
       ).run(input.room, project.version, JSON.stringify(project));
       this.appendChange(input.room, 'project', input.room);
       return project;
+    })();
+  }
+
+  /** Commit the durable project link and its ordinary inbox deliveries as one fact. */
+  commitProjectDispatch(
+    room: string,
+    opts: {
+      expectedVersion: number;
+      message: NewMessage | number;
+      plan(message: Message): {
+        fanout: FanoutDelivery[];
+        project(deliveries: Delivery[], nextVersion: number): ProjectDocumentInput;
+      };
+    },
+  ): AtomicProjectDispatch {
+    return this.db.transaction(() => {
+      const message = typeof opts.message === 'number'
+        ? this.getMessage(room, opts.message)
+        : this.postMessage(room, opts.message);
+      if (!message) throw new Error(`no such project dispatch message: ${String(opts.message)}`);
+      const plan = opts.plan(message);
+      const deliveries = plan.fanout.map((delivery) => this.createDelivery(room, {
+        message_id: message.id,
+        recipient: delivery.recipient,
+        state: delivery.state,
+        payload_snapshot: delivery.payload_snapshot,
+        hop_count: delivery.hop_count,
+      }));
+      const project = this.saveProject(
+        plan.project(deliveries, opts.expectedVersion + 1),
+        opts.expectedVersion,
+      );
+      return { project, message, deliveries };
     })();
   }
 

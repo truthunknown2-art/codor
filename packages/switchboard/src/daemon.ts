@@ -58,7 +58,7 @@ import {
   findAcpProviderDefinition,
 } from './acp-providers.js';
 import { BlobStore } from './blobs.js';
-import { applyProjectMutation } from './project.js';
+import { applyProjectMutation, replaceProjectTasks } from './project.js';
 import {
   executableOnPath,
   type RegisteredHarnessAdapter,
@@ -95,6 +95,7 @@ import {
 import {
   Store,
   type FanoutDelivery,
+  type NewMessage,
   type RoutedMessagePlan,
   type TurnOutputPatch,
 } from './store.js';
@@ -3424,6 +3425,7 @@ export class Daemon {
       return;
     }
     // harn:end only-an-admissible-delivery-becomes-delivering
+    this.markProjectDeliveriesStarted(room, batch);
     const runMsg = started.runMessage;
     this.emitMessage(room, runMsg);
     this.noteRunActivity(room, runMsg.id);
@@ -4152,9 +4154,14 @@ export class Daemon {
       groupedDelivery === undefined,
     );
     const humanIds = new Set(planned.result.humans.map((human) => human.id));
-    const fanout = groupedDelivery === undefined
+    const routedFanout = groupedDelivery === undefined
       ? planned.plan.fanout
       : planned.plan.fanout.filter((delivery) => humanIds.has(delivery.recipient));
+    const projectLinked = batch.some((delivery) => this.isProjectDelivery(room, delivery.id));
+    const explicitRecipients = new Set(parsed.mentions.map((mention) => mention.member_id));
+    const fanout = projectLinked
+      ? routedFanout.filter((delivery) => explicitRecipients.has(delivery.recipient))
+      : routedFanout;
     const day = new Date().toISOString().slice(0, 10);
     const completed = this.store.completeTurn(room, {
       runMsgId,
@@ -4217,6 +4224,15 @@ export class Daemon {
     }
     // harn:end extensions-retire-with-parent-run
     this.emit(room, { type: 'meter', seq: this.store.currentSeq(room), meter: completed.meter });
+    this.settleProjectDeliveries(
+      room,
+      batch,
+      resultMessageId,
+      completion,
+      completed.collaboration?.group.id,
+    );
+    this.reconcileProjectAutomation(room);
+    this.handleCoordinatorProjectCompletion(room, batch, completion);
     this.dispatchCreatedDeliveries(room, completed.deliveries);
     if (groupedDelivery?.group_id !== undefined && groupedDelivery.group_round !== undefined) {
       this.clearSatisfiedGroupWaits(room, groupedDelivery.group_id, groupedDelivery.group_round);
@@ -4288,6 +4304,22 @@ export class Daemon {
       }
     }
 
+    // A task-linked collaboration returns the barrier aggregate to its assignee once,
+    // even when participants correctly avoid an onward @mention.
+    const project = this.store.getProject(room);
+    const taskLinked = project?.tasks.find((task) => task.dispatches?.work.some((dispatch) =>
+      dispatch.group_id === groupId));
+    if (
+      nextMembers.length === 0 &&
+      taskLinked?.assignee !== undefined &&
+      !projection.participants.some((participant) => participant.member_id === taskLinked.assignee)
+    ) {
+      const assignee = this.store.getMember(room, taskLinked.assignee);
+      if (assignee?.kind === 'agent' && assignee.removed_ts === undefined) {
+        nextMembers.push(assignee);
+      }
+    }
+
     const context: GroupRoundPayloadContext = {
       ...this.groupPayloadContext(room, root, groupId, roundNumber + 1),
       priorRoundNumber: roundNumber,
@@ -4307,9 +4339,37 @@ export class Daemon {
     });
     if (release.status === 'released') {
       this.dispatchCreatedDeliveries(room, release.deliveries);
+    } else if (release.status === 'closed') {
+      this.finishProjectCollaboration(room, groupId, release.projection!);
     }
   }
   // harn:end collaboration-round-release-is-one-barrier
+
+  private finishProjectCollaboration(
+    room: string,
+    groupId: string,
+    projection: NonNullable<ReturnType<Store['getCollaborationRoundProjection']>>,
+  ): void {
+    const project = this.store.getProject(room);
+    const task = project?.tasks.find((candidate) => candidate.dispatches?.work.some((dispatch) =>
+      dispatch.group_id === groupId));
+    const work = task?.dispatches?.work.find((dispatch) => dispatch.group_id === groupId);
+    if (!project || !task || !work) return;
+    const participant = projection.participants.find((candidate) => candidate.member_id === task.assignee)
+      ?? projection.participants.at(-1);
+    const resultMessageId = participant?.result_message_id ?? work.result_message_id;
+    if (resultMessageId === undefined) return;
+    const result = this.store.getMessage(room, resultMessageId);
+    const root = result === undefined ? undefined : this.store.getRunRoot(room, result);
+    const status = participant?.terminal_status === 'completed' ? 'completed' as const : 'failed' as const;
+    this.finishProjectWork(room, task.id, work.delivery_id, resultMessageId, {
+      status,
+      final_text: root?.run?.final_text ?? result?.body,
+      error: status === 'failed'
+        ? root?.run?.error ?? `collaboration ${groupId} ended ${participant?.terminal_status ?? 'without a result'}`
+        : undefined,
+    });
+  }
 
   private clearSatisfiedGroupWaits(room: string, groupId: string, roundNumber: number): void {
     const participants = this.store.listCollaborationParticipants(room, groupId, roundNumber);
@@ -4701,6 +4761,7 @@ export class Daemon {
       }
       // harn:end lifecycle-retries-only-live-collaboration-work
       this.reconcileCollaborationGroups(room.id);
+      this.reconcileProjectAutomation(room.id);
       // drain anything still queued (tracked — a turn may block on an ask)
       for (const member of this.store.listMembers(room.id)) {
         if (member.kind === 'agent') this.track(this.maybeStartTurn(room.id, member.id));
@@ -5206,6 +5267,540 @@ export class Daemon {
     return project;
   }
 
+  private emitProject(project: ProjectDocument): void {
+    this.emit(project.room, { type: 'project', seq: this.store.currentSeq(project.room), project });
+  }
+
+  private projectInput(
+    project: ProjectDocument,
+    tasks: ProjectDocument['tasks'],
+    patch: Partial<Pick<ProjectDocument, 'guarded_autopilot' | 'continuation'>> = {},
+  ): ProjectDocumentInput {
+    const current = { ...project, ...patch };
+    const actor = this.store.getMember(project.room, project.coordinator);
+    if (!actor) throw new Error(`project coordinator ${project.coordinator} is unavailable`);
+    return replaceProjectTasks({
+      room: project.room,
+      actor,
+      current,
+      member: (id) => this.store.getMember(project.room, id),
+      messageExists: (id) => this.store.getMessage(project.room, id) !== undefined,
+    }, current, tasks);
+  }
+
+  private projectSystemMessage(room: string, body: string, refs: number[] = []): NewMessage {
+    const system = this.store.listMembers(room).find((member) => member.kind === 'system');
+    if (!system) throw new Error(`room ${room} has no system member`);
+    return { author: system.id, kind: 'system', body, mentions: [], refs, ledger_refs: [] };
+  }
+
+  private projectFanout(
+    room: string,
+    message: Message,
+    recipients: string[],
+    existing: Map<string, Delivery>,
+    hopCount: number,
+  ): FanoutDelivery[] {
+    const members = recipients
+      .filter((id) => !existing.has(id))
+      .map((id) => this.store.getMember(room, id))
+      .filter((member): member is Member => member !== undefined && member.removed_ts === undefined);
+    return members.map((member) => ({
+      recipient: member.id,
+      state: member.kind === 'agent' ? 'queued' : 'consumed',
+      ...(member.kind === 'agent' && {
+        payload_snapshot: this.snapshotPayload(room, message, member, members),
+        hop_count: hopCount,
+      }),
+    }));
+  }
+
+  private projectTaskBody(project: ProjectDocument, task: ProjectDocument['tasks'][number]): string {
+    const coordinator = this.store.getMember(project.room, project.coordinator);
+    const dependencies = task.dependencies.length === 0 ? 'none' : task.dependencies.join(', ');
+    return [
+      `[project task ${task.id} revision ${String(task.revision)}]`,
+      `Project objective: ${project.objective}`,
+      `Task: ${task.title}`,
+      task.description,
+      `Acceptance criteria:\n- ${task.acceptance_criteria.join('\n- ')}`,
+      `Dependencies: ${dependencies}`,
+      `Workspace mode: ${task.workspace_mode}`,
+      `Coordinator: @${coordinator?.handle ?? project.coordinator}`,
+      'Complete this one delivered turn. Put the measured evidence, exact status, and next action in your final response.',
+      `If blocked, run: codor project block ${task.id} -r ${project.room} --note "<reason>"`,
+      'Do not start hidden Goal/CreateGoal or automatic continuation state; Codor owns later deliveries.',
+    ].join('\n\n');
+  }
+
+  private dispatchReadyProjectTask(project: ProjectDocument, taskId: string): ProjectDocument {
+    const task = project.tasks.find((candidate) => candidate.id === taskId);
+    if (!task?.assignee) return project;
+    const assignee = this.store.getMember(project.room, task.assignee);
+    if (!assignee || assignee.removed_ts !== undefined) return project;
+    const committed = this.store.commitProjectDispatch(project.room, {
+      expectedVersion: project.version,
+      message: this.projectSystemMessage(project.room, this.projectTaskBody(project, task)),
+      plan: (message) => ({
+        fanout: this.projectFanout(project.room, message, [assignee.id], new Map(), 1),
+        project: (deliveries) => {
+          const delivery = deliveries[0];
+          if (!delivery) throw new Error(`project task ${task.id} produced no delivery`);
+          return this.projectInput(project, project.tasks.map((candidate) => candidate.id === task.id
+            ? {
+                ...candidate,
+                dispatches: {
+                  work: [...(candidate.dispatches?.work ?? []), {
+                    revision: candidate.revision,
+                    delivery_id: delivery.id,
+                  }],
+                  reviews: candidate.dispatches?.reviews ?? [],
+                },
+              }
+            : candidate));
+        },
+      }),
+    });
+    this.emitMessage(project.room, committed.message);
+    this.emitProject(committed.project);
+    this.dispatchCreatedDeliveries(project.room, committed.deliveries);
+    return committed.project;
+  }
+
+  private markProjectDeliveriesStarted(room: string, batch: Delivery[]): void {
+    const project = this.store.getProject(room);
+    if (!project) return;
+    const deliveryIds = new Set(batch.map((delivery) => delivery.id));
+    let changed = false;
+    const tasks = project.tasks.map((task) => {
+      const current = task.dispatches?.work.find((dispatch) =>
+        dispatch.revision === task.revision && deliveryIds.has(dispatch.delivery_id));
+      if (!current || task.status !== 'ready') return task;
+      changed = true;
+      return { ...task, status: 'in_progress' as const };
+    });
+    if (!changed) return;
+    this.saveProject(this.projectInput(project, tasks), project.version);
+  }
+
+  private finishProjectWork(
+    room: string,
+    taskId: string,
+    workDeliveryId: string,
+    resultMessageId: number,
+    completion: TurnCompletion,
+    groupId?: string,
+  ): Delivery[] {
+    const project = this.store.getProject(room);
+    const task = project?.tasks.find((candidate) => candidate.id === taskId);
+    const work = task?.dispatches?.work.find((dispatch) => dispatch.delivery_id === workDeliveryId);
+    if (!project || !task || !work) return [];
+
+    if (groupId !== undefined) {
+      if (work.group_id === groupId) return [];
+      const tasks = project.tasks.map((candidate) => candidate.id === task.id ? {
+        ...candidate,
+        dispatches: {
+          work: candidate.dispatches!.work.map((dispatch) => dispatch.delivery_id === workDeliveryId
+            ? { ...dispatch, result_message_id: resultMessageId, group_id: groupId }
+            : dispatch),
+          reviews: candidate.dispatches!.reviews,
+        },
+      } : candidate);
+      this.saveProject(this.projectInput(project, tasks), project.version);
+      return [];
+    }
+
+    const failed = completion.status !== 'completed';
+    const failure = (completion.error ?? completion.final_text ?? 'agent turn failed').trim() || 'agent turn failed';
+    const recipients = failed ? [project.coordinator] : [...new Set([...task.gatekeepers, project.coordinator])];
+    const source: NewMessage = failed
+      ? this.projectSystemMessage(room, `[project task ${task.id} failed]\n\n${failure}`, [resultMessageId])
+      : this.projectSystemMessage(room, [
+          `[project task ${task.id} revision ${String(work.revision)} ready for review]`,
+          `Task: ${task.title}`,
+          `Acceptance criteria:\n- ${task.acceptance_criteria.join('\n- ')}`,
+          `Worker result: #${String(resultMessageId)}`,
+          `Gatekeepers must record a decision with either:\n- codor project review ${task.id} -r ${room} --decision approved\n- codor project review ${task.id} -r ${room} --decision changes-requested --note "<reason>"`,
+          'The coordinator receives this task-linked result automatically; no remembered @mention is required.',
+        ].join('\n\n'), [resultMessageId]);
+    const existing = new Map<string, Delivery>();
+    const workDelivery = this.store.getDelivery(room, workDeliveryId);
+    const committed = this.store.commitProjectDispatch(room, {
+      expectedVersion: project.version,
+      message: source,
+      plan: (message) => ({
+        fanout: this.projectFanout(
+          room,
+          message,
+          recipients,
+          existing,
+          (workDelivery?.hop_count ?? 1) + 1,
+        ),
+        project: (created, nextVersion) => {
+          const links = new Map(existing);
+          for (const delivery of created) links.set(delivery.recipient, delivery);
+          const tasks = project.tasks.map((candidate) => {
+            if (candidate.id !== task.id) return candidate;
+            const currentRevision = candidate.revision === work.revision;
+            const evidence = candidate.evidence.some((item) =>
+              item.type === 'message' && item.message_id === resultMessageId)
+              ? candidate.evidence
+              : [...candidate.evidence, { type: 'message' as const, message_id: resultMessageId }];
+            const reviews = failed ? candidate.dispatches!.reviews : [
+              ...candidate.dispatches!.reviews,
+              ...candidate.gatekeepers
+                .filter((gatekeeper) => !candidate.dispatches!.reviews.some((dispatch) =>
+                  dispatch.revision === work.revision && dispatch.gatekeeper === gatekeeper))
+                .map((gatekeeper) => ({
+                  revision: work.revision,
+                  gatekeeper,
+                  delivery_id: links.get(gatekeeper)!.id,
+                })),
+            ];
+            return {
+              ...candidate,
+              ...(currentRevision && {
+                status: failed
+                  ? 'blocked' as const
+                  : candidate.gatekeepers.length === 0 ? 'done' as const : 'in_review' as const,
+                evidence: failed
+                  ? [...evidence, { type: 'note' as const, text: failure.slice(0, 2_000) }]
+                  : evidence,
+              }),
+              dispatches: {
+                work: candidate.dispatches!.work.map((dispatch) => dispatch.delivery_id === workDeliveryId
+                  ? (() => {
+                      const { group_id: _group, ...settled } = dispatch;
+                      return {
+                        ...settled,
+                        result_message_id: resultMessageId,
+                        coordinator_delivery_id: links.get(project.coordinator)!.id,
+                        coordinator_version: nextVersion,
+                      };
+                    })()
+                  : dispatch),
+                reviews,
+              },
+            };
+          });
+          return this.projectInput(project, tasks);
+        },
+      }),
+    });
+    this.emitMessage(room, committed.message);
+    this.emitProject(committed.project);
+    this.dispatchCreatedDeliveries(room, committed.deliveries);
+    return committed.deliveries;
+  }
+
+  private finishProjectReview(
+    room: string,
+    taskId: string,
+    reviewDeliveryId: string,
+    resultMessageId: number,
+    completion: TurnCompletion,
+  ): Delivery[] {
+    const project = this.store.getProject(room);
+    const task = project?.tasks.find((candidate) => candidate.id === taskId);
+    const review = task?.dispatches?.reviews.find((dispatch) => dispatch.delivery_id === reviewDeliveryId);
+    if (!project || !task || !review || review.result_message_id !== undefined) return [];
+    const failed = completion.status !== 'completed';
+    const failure = (completion.error ?? completion.final_text ?? 'review turn failed').trim() || 'review turn failed';
+    const source: NewMessage = failed
+      ? this.projectSystemMessage(room, `[project review ${task.id} by ${review.gatekeeper} failed]\n\n${failure}`, [resultMessageId])
+      : this.projectSystemMessage(
+          room,
+          `[project review result for ${task.id} revision ${String(review.revision)}]\n\nGatekeeper result: #${String(resultMessageId)}`,
+          [resultMessageId],
+        );
+    const reviewDelivery = this.store.getDelivery(room, reviewDeliveryId);
+    const existing = review.gatekeeper === project.coordinator && reviewDelivery !== undefined
+      ? new Map([[project.coordinator, reviewDelivery]])
+      : new Map<string, Delivery>();
+    const committed = this.store.commitProjectDispatch(room, {
+      expectedVersion: project.version,
+      message: source,
+      plan: (message) => ({
+        fanout: this.projectFanout(
+          room,
+          message,
+          [project.coordinator],
+          existing,
+          (reviewDelivery?.hop_count ?? 2) + 1,
+        ),
+        project: (created, nextVersion) => {
+          const coordinatorDelivery = existing.get(project.coordinator) ?? created[0];
+          if (!coordinatorDelivery) throw new Error(`project review ${task.id} produced no coordinator delivery`);
+          const tasks = project.tasks.map((candidate) => candidate.id === task.id ? {
+            ...candidate,
+            ...(failed && candidate.revision === review.revision && candidate.status !== 'done' && {
+              status: 'blocked' as const,
+              evidence: [...candidate.evidence, { type: 'note' as const, text: failure.slice(0, 2_000) }],
+            }),
+            dispatches: {
+              work: candidate.dispatches!.work,
+              reviews: candidate.dispatches!.reviews.map((dispatch) => dispatch.delivery_id === reviewDeliveryId
+                ? {
+                    ...dispatch,
+                    result_message_id: resultMessageId,
+                    coordinator_delivery_id: coordinatorDelivery.id,
+                    coordinator_version: nextVersion,
+                  }
+                : dispatch),
+            },
+          } : candidate);
+          return this.projectInput(project, tasks);
+        },
+      }),
+    });
+    this.emitMessage(room, committed.message);
+    this.emitProject(committed.project);
+    this.dispatchCreatedDeliveries(room, committed.deliveries);
+    return committed.deliveries;
+  }
+
+  private isProjectDelivery(room: string, deliveryId: string): boolean {
+    const project = this.store.getProject(room);
+    return project?.continuation?.delivery_id === deliveryId || project?.tasks.some((task) =>
+      task.dispatches?.work.some((dispatch) =>
+        dispatch.delivery_id === deliveryId || dispatch.coordinator_delivery_id === deliveryId) ||
+      task.dispatches?.reviews.some((dispatch) =>
+        dispatch.delivery_id === deliveryId || dispatch.coordinator_delivery_id === deliveryId)) === true;
+  }
+
+  private settleProjectDeliveries(
+    room: string,
+    batch: Delivery[],
+    resultMessageId: number,
+    completion: TurnCompletion,
+    groupId?: string,
+  ): void {
+    for (const delivery of batch) {
+      const project = this.store.getProject(room);
+      if (!project) return;
+      for (const task of project.tasks) {
+        if (task.dispatches?.work.some((dispatch) => dispatch.delivery_id === delivery.id)) {
+          this.finishProjectWork(room, task.id, delivery.id, resultMessageId, completion, groupId);
+          break;
+        }
+        if (task.dispatches?.reviews.some((dispatch) => dispatch.delivery_id === delivery.id)) {
+          this.finishProjectReview(room, task.id, delivery.id, resultMessageId, completion);
+          break;
+        }
+      }
+    }
+  }
+
+  private coordinatorDeliveryVersion(project: ProjectDocument, deliveryId: string): number | undefined {
+    for (const task of project.tasks) {
+      for (const dispatch of task.dispatches?.work ?? []) {
+        if (dispatch.coordinator_delivery_id === deliveryId) return dispatch.coordinator_version;
+      }
+      for (const dispatch of task.dispatches?.reviews ?? []) {
+        if (dispatch.coordinator_delivery_id === deliveryId) return dispatch.coordinator_version;
+      }
+    }
+    return undefined;
+  }
+
+  private coordinatorProjectAction(project: ProjectDocument): string | undefined {
+    if (project.status !== 'active' || !project.guarded_autopilot) return undefined;
+    if (project.tasks.some((task) => task.status === 'blocked')) return undefined;
+    if (project.tasks.length > 0 && project.tasks.every((task) => task.status === 'done')) {
+      return 'all tasks are done; verify the evidence and close the project';
+    }
+    const unassigned = project.tasks.find((task) => task.status === 'ready' && task.assignee === undefined);
+    if (unassigned) return `ready task ${unassigned.id} needs an assignee`;
+    const undecided = project.tasks.find((task) => task.status === 'in_review' && task.gatekeepers.some((gatekeeper) => {
+      const delivered = task.dispatches?.reviews.find((dispatch) =>
+        dispatch.revision === task.revision && dispatch.gatekeeper === gatekeeper);
+      const decided = task.reviews.some((review) =>
+        review.revision === task.revision && review.gatekeeper === gatekeeper);
+      return delivered?.result_message_id !== undefined && !decided;
+    }));
+    return undecided === undefined
+      ? undefined
+      : `task ${undecided.id} has finished review work but no recorded review decision`;
+  }
+
+  private pauseProjectAutopilot(project: ProjectDocument, reason: string): void {
+    if (!project.guarded_autopilot) return;
+    this.saveProject(
+      this.projectInput({ ...project, guarded_autopilot: false }, project.tasks),
+      project.version,
+    );
+    this.postSystemMessage(
+      project.room,
+      `Guarded autopilot paused: ${reason}. @${this.store.getMember(project.room, project.coordinator)?.handle ?? project.coordinator} needs attention.`,
+    );
+  }
+
+  private sendProjectContinuation(project: ProjectDocument, action: string): void {
+    const coordinator = this.store.getMember(project.room, project.coordinator);
+    if (!coordinator || coordinator.removed_ts !== undefined) return;
+    const committed = this.store.commitProjectDispatch(project.room, {
+      expectedVersion: project.version,
+      message: this.projectSystemMessage(
+        project.room,
+        `[guarded project continuation]\n\n${action}. Advance the canonical board now, or explain the human decision required. This is the only automatic continuation for the unchanged board version.`,
+      ),
+      plan: (message) => ({
+        fanout: this.projectFanout(project.room, message, [coordinator.id], new Map(), 1),
+        project: (deliveries, nextVersion) => {
+          const delivery = deliveries[0];
+          if (!delivery) throw new Error('guarded project continuation produced no delivery');
+          return this.projectInput(project, project.tasks, {
+            continuation: { delivery_id: delivery.id, project_version: nextVersion },
+          });
+        },
+      }),
+    });
+    this.emitMessage(project.room, committed.message);
+    this.emitProject(committed.project);
+    this.dispatchCreatedDeliveries(project.room, committed.deliveries);
+  }
+
+  private handleCoordinatorProjectCompletion(
+    room: string,
+    batch: Delivery[],
+    completion: TurnCompletion,
+  ): void {
+    const project = this.store.getProject(room);
+    if (!project?.guarded_autopilot || project.status !== 'active') return;
+    const continuation = batch.find((delivery) => delivery.id === project.continuation?.delivery_id);
+    if (continuation) {
+      if (project.version === project.continuation!.project_version) {
+        this.pauseProjectAutopilot(
+          project,
+          completion.status === 'completed'
+            ? 'the coordinator returned twice without advancing the board'
+            : 'the guarded coordinator continuation did not complete',
+        );
+      }
+      return;
+    }
+    const notification = batch
+      .map((delivery) => ({ delivery, version: this.coordinatorDeliveryVersion(project, delivery.id) }))
+      .find((candidate) => candidate.version === project.version);
+    if (!notification) return;
+    const action = this.coordinatorProjectAction(project);
+    if (action !== undefined) this.sendProjectContinuation(project, action);
+  }
+
+  private terminalProjectCompletion(message: Message): TurnCompletion | undefined {
+    const root = this.store.getRunRoot(message.room, message) ?? message;
+    if (!root.run || root.run.status === 'running') return undefined;
+    return {
+      status: root.run.status,
+      final_text: root.run.final_text,
+      error: root.run.error,
+      model: root.run.model,
+      usage: root.run.usage,
+    };
+  }
+
+  private reconcileProjectAutomation(room: string): void {
+    for (let pass = 0; pass < 1_000; pass += 1) {
+      const project = this.store.getProject(room);
+      if (!project || project.status !== 'active' || !project.guarded_autopilot) return;
+
+      const ready = project.tasks.find((task) =>
+        task.status === 'ready' &&
+        task.assignee !== undefined &&
+        !task.dispatches?.work.some((dispatch) => dispatch.revision === task.revision));
+      if (ready) {
+        this.dispatchReadyProjectTask(project, ready.id);
+        continue;
+      }
+
+      let advanced = false;
+      for (const task of project.tasks) {
+        for (const work of task.dispatches?.work ?? []) {
+          if (work.result_message_id !== undefined && work.group_id === undefined) continue;
+          const delivery = this.store.getDelivery(room, work.delivery_id);
+          if (!delivery) continue;
+          if (delivery.state === 'delivering' && task.status === 'ready' && work.revision === task.revision) {
+            this.markProjectDeliveriesStarted(room, [delivery]);
+            advanced = true;
+            break;
+          }
+          if (delivery.state !== 'consumed' || delivery.run_msg_id === undefined) continue;
+          const run = this.store.getMessage(room, delivery.run_msg_id);
+          if (!run) continue;
+          const completion = this.terminalProjectCompletion(run);
+          if (!completion) continue;
+          const resultMessageId = run.run?.result_message_id ?? run.id;
+          const collaboration = this.store.listCollaborationGroups(room)
+            .find((group) => group.root_message_id === resultMessageId);
+          if (collaboration?.state === 'open') continue;
+          if (collaboration?.state === 'completed') {
+            const round = this.store.listCollaborationRounds(room, collaboration.id).at(-1);
+            const projection = round === undefined
+              ? undefined
+              : this.store.getCollaborationRoundProjection(room, collaboration.id, round.round_number);
+            if (projection) this.finishProjectCollaboration(room, collaboration.id, projection);
+          } else {
+            this.finishProjectWork(room, task.id, delivery.id, resultMessageId, completion);
+          }
+          advanced = true;
+          break;
+        }
+        if (advanced) break;
+        for (const review of task.dispatches?.reviews ?? []) {
+          if (review.result_message_id !== undefined) continue;
+          const delivery = this.store.getDelivery(room, review.delivery_id);
+          if (delivery?.state !== 'consumed' || delivery.run_msg_id === undefined) continue;
+          const run = this.store.getMessage(room, delivery.run_msg_id);
+          if (!run) continue;
+          const completion = this.terminalProjectCompletion(run);
+          if (!completion) continue;
+          this.finishProjectReview(
+            room,
+            task.id,
+            delivery.id,
+            run.run?.result_message_id ?? run.id,
+            completion,
+          );
+          advanced = true;
+          break;
+        }
+        if (advanced) break;
+      }
+      if (advanced) continue;
+
+      const current = this.store.getProject(room)!;
+      const coordinatorDeliveries = [
+        ...current.tasks.flatMap((task) => task.dispatches?.work ?? []),
+        ...current.tasks.flatMap((task) => task.dispatches?.reviews ?? []),
+      ].filter((dispatch) => dispatch.coordinator_delivery_id !== undefined);
+      const pendingCoordinator = coordinatorDeliveries.find((dispatch) => {
+        if (dispatch.coordinator_version !== current.version) return false;
+        const delivery = this.store.getDelivery(room, dispatch.coordinator_delivery_id!);
+        if (delivery?.state !== 'consumed' || delivery.run_msg_id === undefined) return false;
+        const run = this.store.getMessage(room, delivery.run_msg_id);
+        return run !== undefined && this.terminalProjectCompletion(run) !== undefined;
+      });
+      if (pendingCoordinator?.coordinator_delivery_id !== undefined) {
+        const delivery = this.store.getDelivery(room, pendingCoordinator.coordinator_delivery_id);
+        const run = delivery?.run_msg_id === undefined ? undefined : this.store.getMessage(room, delivery.run_msg_id);
+        if (delivery && run) this.handleCoordinatorProjectCompletion(room, [delivery], this.terminalProjectCompletion(run)!);
+      }
+      const continuationDelivery = current.continuation === undefined
+        ? undefined
+        : this.store.getDelivery(room, current.continuation.delivery_id);
+      const continuationRun = continuationDelivery?.run_msg_id === undefined
+        ? undefined
+        : this.store.getMessage(room, continuationDelivery.run_msg_id);
+      if (continuationDelivery && continuationRun) {
+        const completion = this.terminalProjectCompletion(continuationRun);
+        if (completion) this.handleCoordinatorProjectCompletion(room, [continuationDelivery], completion);
+      }
+      return;
+    }
+    throw new Error(`project automation for ${room} exceeded its reconciliation bound`);
+  }
+
   mutateProject(room: string, actorId: string, mutation: ProjectMutation): ProjectDocument {
     const actor = this.store.getMember(room, actorId);
     if (!actor) throw new Error(`no such room member: ${actorId}`);
@@ -5216,7 +5811,11 @@ export class Daemon {
       member: (id) => this.store.getMember(room, id),
       messageExists: (id) => this.store.getMessage(room, id) !== undefined,
     }, mutation);
-    return this.saveProject(input, mutation.expected_version);
+    const saved = this.store.saveProject(input, mutation.expected_version);
+    this.reconcileProjectAutomation(room);
+    const project = this.store.getProject(room)!;
+    if (project.version === saved.version) this.emitProject(project);
+    return project;
   }
 
   readRunBlob(room: string, msgId: number): WireEvent[] {

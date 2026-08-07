@@ -261,3 +261,25 @@ export function applyProjectMutation(
   validateTasks(context, next.tasks);
   return validated(next);
 }
+
+/** Internal orchestration transitions use the same refresh and validation path as user mutations. */
+export function replaceProjectTasks(
+  context: ProjectMutationContext,
+  project: ProjectDocument,
+  tasks: ProjectTask[],
+  continuation = project.continuation,
+): ProjectDocumentInput {
+  const next = refresh({
+    room: project.room,
+    title: project.title,
+    objective: project.objective,
+    status: project.status,
+    coordinator: project.coordinator,
+    guarded_autopilot: project.guarded_autopilot,
+    ...(continuation && { continuation }),
+    milestones: project.milestones,
+    tasks,
+  });
+  validateTasks(context, next.tasks);
+  return validated(next);
+}
