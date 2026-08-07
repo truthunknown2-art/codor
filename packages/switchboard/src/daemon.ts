@@ -16,9 +16,11 @@ import type {
   ThinkingLevel,
   AttachLease,
   BridgeOrigin,
+  BillingMode,
   Delivery,
   HarnessAdapter,
   Member,
+  MemberAccent,
   MemberStatusResponse,
   Message,
   PendingInteraction,
@@ -32,6 +34,8 @@ import type {
   RunSearchHit,
   ServerFrame,
   Session,
+  TeamProfile,
+  TeamProfileInput,
   VoiceNote,
   WireEvent,
   CreateRoomRequest,
@@ -943,11 +947,23 @@ export class Daemon {
 
   // harn:assume channel-creation-derived-and-seeded ref=derived-channel-creation
   createRoom(opts: CreateRoomRequest): ReturnType<Store['createRoom']> {
+    const profile = opts.team_profile_id === undefined
+      ? undefined
+      : this.store.getTeamProfile(opts.team_profile_id);
+    if (opts.team_profile_id !== undefined && profile === undefined) {
+      throw new Error(`no such team profile: ${opts.team_profile_id}`);
+    }
+    if (profile !== undefined && opts.cwd === undefined) {
+      throw new Error('a team profile requires one channel working directory');
+    }
     // harn:assume starting-agent-name-derives-one-valid-identity-v6 ref=starting-agent-create-validation
     if (opts.starting_agent?.handle === opts.owner.handle) {
       throw new Error(
         `starting agent handle @${opts.starting_agent.handle} is already in use by the channel owner`,
       );
+    }
+    if (profile?.members.some((member) => member.handle === opts.owner.handle)) {
+      throw new Error(`team profile handle @${opts.owner.handle} is already in use by the channel owner`);
     }
     // harn:assume new-agent-requests-require-available-native-or-detected-acp ref=new-agent-provider-availability-preflight
     // A native harness must be installed; an acp request must resolve to exactly one of
@@ -995,6 +1011,21 @@ export class Daemon {
         ...(opts.starting_agent !== undefined && {
           starting_agent_handle: opts.starting_agent.handle,
         }),
+        ...(profile !== undefined && {
+          starting_agent_handle: profile.coordinator_handle,
+          team_setup: {
+            profile_id: profile.id,
+            profile_version: profile.version,
+            coordinator_handle: profile.coordinator_handle,
+            ready: false,
+            members: profile.members.map((member) => ({
+              handle: member.handle,
+              required: member.required,
+              status: 'failed' as const,
+              error: 'not started',
+            })),
+          },
+        }),
         // harn:end channel-starting-agent-handle-persisted
       },
     });
@@ -1011,7 +1042,50 @@ export class Daemon {
         );
       }
     }
-    return created;
+    if (profile === undefined) return created;
+
+    const results = profile.members.map((profileMember) => {
+      try {
+        const member = this.spawnMember(id, {
+          harness: profileMember.harness,
+          handle: profileMember.handle,
+          display_name: profileMember.display_name,
+          cwd: cwd!,
+          policy: profileMember.policy,
+          model: profileMember.model,
+          thinking: profileMember.thinking,
+          purpose: profileMember.purpose,
+          accent: profileMember.accent,
+          billing_mode: profileMember.billing_mode,
+          acp_provider: profileMember.acp_provider,
+        });
+        return {
+          handle: profileMember.handle,
+          required: profileMember.required,
+          status: 'ready' as const,
+          member_id: member.id,
+        };
+      } catch (error) {
+        const message = (error instanceof Error ? error.message : String(error)).slice(0, 2_000);
+        this.postSystemMessage(id, `could not spawn @${profileMember.handle}: ${message}`);
+        return {
+          handle: profileMember.handle,
+          required: profileMember.required,
+          status: 'failed' as const,
+          error: message,
+        };
+      }
+    });
+    const room = this.configureRoom(id, {
+      team_setup: {
+        profile_id: profile.id,
+        profile_version: profile.version,
+        coordinator_handle: profile.coordinator_handle,
+        ready: results.every((member) => !member.required || member.status === 'ready'),
+        members: results,
+      },
+    });
+    return { ...created, room };
   }
   // harn:end channel-creation-derived-and-seeded
 
@@ -1019,6 +1093,83 @@ export class Daemon {
     const updated = this.store.updateRoomConfig(room, patch);
     this.emit(room, { type: 'room', seq: this.store.currentSeq(room), room: updated });
     return updated;
+  }
+
+  saveTeamProfile(input: TeamProfileInput, expectedVersion: number): TeamProfile {
+    for (const member of input.members) {
+      this.requireNewAgentAdapter(member.harness);
+      this.resolveAcpLaunch({
+        harness: member.harness,
+        ...(member.acp_provider !== undefined && { acp_provider: member.acp_provider }),
+      });
+    }
+    return this.store.saveTeamProfile(input, expectedVersion);
+  }
+
+  saveCurrentTeamProfile(
+    room: string,
+    input: { id: string; name: string; coordinator_handle: string },
+    expectedVersion: number,
+  ): TeamProfile {
+    const agents = this.store.listMembers(room).filter(
+      (member): member is Member & { harness: string } =>
+        member.kind === 'agent' && member.removed_ts === undefined && member.harness !== undefined,
+    );
+    if (agents.length === 0) throw new Error('the channel has no agents to save');
+    if (!agents.some((member) => member.handle === input.coordinator_handle)) {
+      throw new Error(`coordinator @${input.coordinator_handle} is not an active channel agent`);
+    }
+    return this.saveTeamProfile({
+      ...input,
+      members: agents.map((member) => ({
+        handle: member.handle,
+        display_name: member.display_name,
+        harness: member.harness,
+        model: member.model,
+        thinking: member.thinking,
+        policy: member.policy as Policy | undefined,
+        purpose: member.purpose,
+        accent: member.accent,
+        billing_mode: member.billing_mode ?? 'unknown',
+        required: true,
+        acp_provider: member.acp_provider,
+      })),
+    }, expectedVersion);
+  }
+
+  deleteTeamProfile(id: string, expectedVersion: number): void {
+    this.store.deleteTeamProfile(id, expectedVersion);
+  }
+
+  retryTeamMember(room: string, handle: string): Member {
+    const located = this.store.getRoom(room);
+    const setup = located?.config.team_setup;
+    if (!setup) throw new Error('the channel was not created from a team profile');
+    if (!located.config.cwd) throw new Error('the team setup has no channel working directory');
+    const profile = this.store.getTeamProfile(setup.profile_id);
+    if (!profile) throw new Error(`team profile ${setup.profile_id} no longer exists`);
+    if (profile.version !== setup.profile_version) {
+      throw new Error('the team profile changed after channel creation; retry from the original profile version is unavailable');
+    }
+    const profileMember = profile.members.find((member) => member.handle === handle);
+    const result = setup.members.find((member) => member.handle === handle);
+    if (!profileMember || !result) throw new Error(`@${handle} is not part of this team setup`);
+    if (result.status === 'ready') throw new Error(`@${handle} is already ready`);
+    const member = this.spawnMember(room, {
+      ...profileMember,
+      cwd: located.config.cwd!,
+    });
+    const members = setup.members.map((candidate) => candidate.handle === handle
+      ? { handle, required: candidate.required, status: 'ready' as const, member_id: member.id }
+      : candidate);
+    this.configureRoom(room, {
+      team_setup: {
+        ...setup,
+        ready: members.every((candidate) => !candidate.required || candidate.status === 'ready'),
+        members,
+      },
+    });
+    return member;
   }
 
   enableLedger(room: string): void {
@@ -1491,6 +1642,8 @@ export class Daemon {
       model?: string;
       thinking?: Session['thinking'];
       purpose?: string;
+      accent?: MemberAccent;
+      billing_mode?: BillingMode;
       acp_launch?: AcpLaunchConfig;
       // harn:assume named-acp-provider-selection-resolves-to-private-structured-launch ref=acp-provider-spawn-resolution
       acp_provider?: string;
@@ -1520,6 +1673,8 @@ export class Daemon {
       handle: opts.handle,
       display_name: opts.display_name ?? opts.handle,
       purpose: opts.purpose,
+      accent: opts.accent,
+      billing_mode: opts.billing_mode,
       harness: opts.harness,
       cwd,
       policy: opts.policy,
@@ -1954,7 +2109,14 @@ export class Daemon {
   configureMember(
     room: string,
     memberId: string,
-    changes: { model?: string | null; thinking?: ThinkingLevel | null; policy?: Policy },
+    changes: {
+      model?: string | null;
+      thinking?: ThinkingLevel | null;
+      policy?: Policy;
+      purpose?: string | null;
+      accent?: MemberAccent | null;
+      billing_mode?: BillingMode;
+    },
     opts: { actor?: string } = {},
   ): Member {
     const member = this.store.getMember(room, memberId);
@@ -1987,10 +2149,16 @@ export class Daemon {
       model: next.model,
       thinking: next.thinking,
       policy: next.policy,
+      purpose: settled(changes.purpose, member.purpose),
+      accent: settled(changes.accent, member.accent),
+      billing_mode: changes.billing_mode ?? member.billing_mode ?? 'unknown',
     });
     // The next turn rebuilds from the row we just wrote. A turn already in flight keeps
     // the session it started with — including for the ask cards it has already raised.
-    this.staleSessions.add(memberId);
+    if (member.model !== updated.model || member.thinking !== updated.thinking || member.policy !== updated.policy) {
+      this.staleSessions.add(memberId);
+    }
+    if (member.purpose !== updated.purpose) this.markRostersStale(room);
     // A model change is a denominator boundary. Do not display or seed the next
     // model from context-window evidence reported by the previous one.
     if (member.model !== updated.model) {
@@ -2005,9 +2173,14 @@ export class Daemon {
       ['policy', member.policy, updated.policy],
       ['model', member.model, updated.model],
       ['thinking', member.thinking, updated.thinking],
+      ['purpose', member.purpose, updated.purpose],
+      ['accent', member.accent, updated.accent],
+      ['billing mode', member.billing_mode, updated.billing_mode],
     ] as const)
       .filter(([, before, after]) => before !== after)
-      .map(([field, before, after]) => `${field}: ${before ?? 'default'} → ${after ?? 'default'}`);
+      .map(([field, before, after]) => field === 'purpose'
+        ? 'purpose updated'
+        : `${field}: ${before ?? 'default'} → ${after ?? 'default'}`);
     if (changed.length > 0) {
       const actor = opts.actor === undefined ? undefined : this.store.getMember(room, opts.actor);
       this.postSystemMessage(

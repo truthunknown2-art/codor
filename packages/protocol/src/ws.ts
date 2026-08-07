@@ -9,7 +9,7 @@ import {
 import { DeliverySchema } from './delivery.js';
 import { WireEventSchema } from './events.js';
 import { MemberIdSchema, MessageIdSchema, RoomIdSchema, SeqSchema, TimestampSchema } from './ids.js';
-import { AssignableHandleSchema } from './member.js';
+import { AssignableHandleSchema, BillingModeSchema, MemberAccentSchema } from './member.js';
 import { MemberSchema } from './member.js';
 import { MessageSchema, VoiceNoteSchema } from './message.js';
 import { ProjectDocumentSchema } from './project.js';
@@ -74,6 +74,15 @@ export type ListRoomsFrame = z.infer<typeof ListRoomsFrameSchema>;
 
 export const ListTeamProfilesFrameSchema = z.object({ type: z.literal('list_team_profiles') });
 export type ListTeamProfilesFrame = z.infer<typeof ListTeamProfilesFrameSchema>;
+
+export const MemberConfigurationSchema = z.object({
+  model: z.string().min(1).nullable().optional(),
+  thinking: ThinkingLevelSchema.nullable().optional(),
+  policy: PolicySchema.optional(),
+  purpose: z.string().trim().min(1).max(10_000).nullable().optional(),
+  accent: MemberAccentSchema.nullable().optional(),
+  billing_mode: BillingModeSchema.optional(),
+}).strict();
 
 export const ActSchema = z.discriminatedUnion('act', [
   z.object({
@@ -176,9 +185,7 @@ export const ActSchema = z.discriminatedUnion('act', [
     // Absent leaves a setting alone; NULL clears it back to the harness default. Without
     // the distinction there is no way to say "stop pinning a model" — only a way to pin a
     // different one.
-    model: z.string().min(1).nullable().optional(),
-    thinking: ThinkingLevelSchema.nullable().optional(),
-    policy: PolicySchema.optional(),
+    ...MemberConfigurationSchema.shape,
   }),
   // harn:end member-config-is-changed-not-respawned
   z.object({

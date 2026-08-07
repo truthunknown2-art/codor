@@ -15,6 +15,11 @@ import {
   AcpProviderIdSchema,
   ClientFrameSchema,
   CreateRoomRequestSchema,
+  DeleteTeamProfileRequestSchema,
+  MemberConfigurationSchema,
+  RetryTeamMemberRequestSchema,
+  SaveCurrentTeamProfileRequestSchema,
+  SaveTeamProfileRequestSchema,
   type BridgeOrigin,
   type Member,
   type Policy,
@@ -806,6 +811,52 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   });
   // harn:end channel-creation-derived-and-seeded
 
+  app.get('/api/team-profiles', (req, reply) => {
+    const principal = authed(req, reply);
+    if (!principal || !authorizeGlobal(principal, 'read', reply)) return;
+    void reply.send({ profiles: daemon.store.listTeamProfiles() });
+  });
+
+  app.post('/api/team-profiles', (req, reply) => {
+    const principal = authed(req, reply);
+    if (!principal || !authorizeGlobal(principal, 'manage_agents', reply)) return;
+    try {
+      const body = SaveTeamProfileRequestSchema.parse(req.body);
+      return reply.send(daemon.saveTeamProfile(body.profile, body.expected_version));
+    } catch (error) {
+      return reply.code(400).send({ error: String(error) });
+    }
+  });
+
+  app.post('/api/team-profiles/from-room', (req, reply) => {
+    const principal = authed(req, reply);
+    if (!principal || !authorizeGlobal(principal, 'manage_agents', reply)) return;
+    try {
+      const body = SaveCurrentTeamProfileRequestSchema.parse(req.body);
+      if (!authorizeRoom(principal, body.room, 'read', reply)) return;
+      return reply.send(daemon.saveCurrentTeamProfile(body.room, {
+        id: body.id,
+        name: body.name,
+        coordinator_handle: body.coordinator_handle,
+      }, body.expected_version));
+    } catch (error) {
+      return reply.code(400).send({ error: String(error) });
+    }
+  });
+
+  app.delete('/api/team-profiles/:profileId', (req, reply) => {
+    const principal = authed(req, reply);
+    if (!principal || !authorizeGlobal(principal, 'manage_agents', reply)) return;
+    try {
+      const { profileId } = req.params as { profileId: string };
+      const body = DeleteTeamProfileRequestSchema.parse(req.body);
+      daemon.deleteTeamProfile(profileId, body.expected_version);
+      return reply.code(204).send();
+    } catch (error) {
+      return reply.code(400).send({ error: String(error) });
+    }
+  });
+
   app.get('/api/rooms/:room/sync', (req, reply) => {
     const principal = authed(req, reply);
     if (!principal) return;
@@ -1322,11 +1373,24 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (!principal) return;
     const { room, memberId } = req.params as { room: string; memberId: string };
     if (!authorizeRoom(principal, room, 'configure', reply)) return;
-    const body = req.body as { model?: string | null; thinking?: ThinkingLevel | null; policy?: Policy };
+    const body = MemberConfigurationSchema.parse(req.body);
     const actor = memberForRoom(principal, room);
     void reply.send(daemon.configureMember(room, memberId, body, { actor: actor.id }));
   });
   // harn:end member-config-is-changed-not-respawned
+
+  app.post('/api/rooms/:room/team/retry', (req, reply) => {
+    const principal = authed(req, reply);
+    if (!principal) return;
+    const { room } = req.params as { room: string };
+    if (!authorizeRoom(principal, room, 'manage_agents', reply)) return;
+    try {
+      const body = RetryTeamMemberRequestSchema.parse(req.body);
+      return reply.send(daemon.retryTeamMember(room, body.handle));
+    } catch (error) {
+      return reply.code(400).send({ error: String(error) });
+    }
+  });
 
   for (const action of ['revive', 'kill', 'pause', 'unpause'] as const) {
     app.post(`/api/rooms/:room/members/:memberId/${action}`, (req, reply) => {
@@ -1743,7 +1807,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               daemon.configureMember(
                 frame.room,
                 act.member_id,
-                { model: act.model, thinking: act.thinking, policy: act.policy },
+                {
+                  model: act.model,
+                  thinking: act.thinking,
+                  policy: act.policy,
+                  purpose: act.purpose,
+                  accent: act.accent,
+                  billing_mode: act.billing_mode,
+                },
                 { actor: actor.id },
               );
             } else if (act.act === 'rename') daemon.renameMember(frame.room, act.member_id, act.handle, act.display_name);

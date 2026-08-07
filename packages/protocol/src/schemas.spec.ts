@@ -36,6 +36,7 @@ import {
   RunSearchHitSchema,
   ServerFrameSchema,
   TeamProfileSchema,
+  TeamSetupSchema,
   TextDeltaPayloadSchema,
   ThinkingLevelSchema,
   ToolCallPayloadSchema,
@@ -92,6 +93,22 @@ describe('project and team profile documents', () => {
       ...profile,
       members: [{ ...profile.members[0], cwd: 'C:\\secret', session_ref: 'native-session' }],
     }).success).toBe(false);
+  });
+
+  it('keeps profile-backed channel setup bounded and mutually exclusive with a starting agent', () => {
+    expect(CreateRoomRequestSchema.safeParse({
+      name: 'Team', owner: { handle: 'owner', display_name: 'Owner' },
+      cwd: 'C:\\work', team_profile_id: 'production',
+    }).success).toBe(true);
+    expect(CreateRoomRequestSchema.safeParse({
+      name: 'Team', owner: { handle: 'owner', display_name: 'Owner' },
+      cwd: 'C:\\work', team_profile_id: 'production',
+      starting_agent: { harness: 'codex', handle: 'coder' },
+    }).success).toBe(false);
+    expect(TeamSetupSchema.safeParse({
+      profile_id: 'production', profile_version: 2, coordinator_handle: 'planner', ready: false,
+      members: [{ handle: 'planner', required: true, status: 'failed', error: 'not installed' }],
+    }).success).toBe(true);
   });
 });
 

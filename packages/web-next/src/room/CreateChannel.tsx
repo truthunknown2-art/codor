@@ -1,10 +1,12 @@
-import type { Room } from '@codor/protocol';
+import type { Room, TeamProfile } from '@codor/protocol';
 import { deriveAssignableHandle, deriveRoomId } from '@codor/protocol';
 import { FolderPlus, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   createRoom,
+  deleteTeamProfile,
+  fetchTeamProfiles,
 } from '@runtime/api.js';
 
 import { AgentControls, AgentIdentityControls, Section } from './AgentControls.js';
@@ -38,6 +40,9 @@ export function CreateChannelDialog(props: {
   const all = [...adapters, ...advanced];
   const [name, setName] = useState('');
   const [cwd, setCwd] = useState('');
+  const [profiles, setProfiles] = useState<TeamProfile[]>([]);
+  const [profileId, setProfileId] = useState('');
+  const [profileError, setProfileError] = useState<string>();
   const [agentConfig, setAgentConfig] = useState<AgentConfig>({
     harness: '', model: '', thinking: '', policy: DEFAULT_POLICY,
   });
@@ -49,6 +54,17 @@ export function CreateChannelDialog(props: {
   // A server error about the starting agent belongs beside the agent name, not in
   // a generic banner at the bottom where it reads as unrelated to the field.
   const [agentError, setAgentError] = useState<string>();
+
+  useEffect(() => {
+    let current = true;
+    void fetchTeamProfiles({ token: props.token() }).then(
+      (items) => { if (current) setProfiles(items); },
+      (failure: unknown) => {
+        if (current) setProfileError(failure instanceof Error ? failure.message : String(failure));
+      },
+    );
+    return () => { current = false; };
+  }, [props.token]);
 
   const owner = me(members, selfId);
   // A blank name is not an error — it falls back to "Agent", so the handle is
@@ -86,9 +102,12 @@ export function CreateChannelDialog(props: {
   const ownerClash = agentHarness !== '' && derivedHandle !== undefined
     && collidesWithOwner(derivedHandle, owner);
   const acpLaunch = acpLaunchFromConfig(agentConfig);
+  const selectedProfile = profiles.find((profile) => profile.id === profileId);
   const canCreate = name.trim() !== '' && cwd.trim() !== '' && owner !== undefined && !busy
-    && !ownerClash && (agentHarness === '' || derivedHandle !== undefined)
-    && (agentHarness !== 'acp' || acpLaunch !== undefined);
+    && (selectedProfile !== undefined || (
+      !ownerClash && (agentHarness === '' || derivedHandle !== undefined)
+      && (agentHarness !== 'acp' || acpLaunch !== undefined)
+    ));
 
   const submit = (): void => {
     if (!canCreate || owner === undefined) return;
@@ -99,7 +118,8 @@ export function CreateChannelDialog(props: {
       name: name.trim(),
       owner: { handle: owner.handle, display_name: owner.display_name },
       cwd: cwd.trim(),
-      ...(agentHarness !== '' && derivedHandle !== undefined && {
+      ...(selectedProfile !== undefined && { team_profile_id: selectedProfile.id }),
+      ...(selectedProfile === undefined && agentHarness !== '' && derivedHandle !== undefined && {
         starting_agent: {
           // A named tile's selector id (`acp:kimi`) resolves to the `acp` harness plus a
           // safe provider id; the generic tile keeps its custom launch. Never send the
@@ -174,7 +194,55 @@ export function CreateChannelDialog(props: {
         <FolderPicker token={props.token} value={cwd} onChange={setCwd} idPrefix="create" />
       </div>
       </Section>
-      <Section n={2} title="Starting agent">
+      <Section n={2} title="Team">
+      <label className="nx-field">
+        <span className="nx-label">Team profile <span className="nx-opt">Â· optional</span></span>
+        <select
+          value={profileId}
+          onChange={(event) => setProfileId(event.target.value)}
+          data-testid="create-team-profile"
+        >
+          <option value="">No profile</option>
+          {profiles.map((profile) => (
+            <option key={profile.id} value={profile.id}>{profile.name}</option>
+          ))}
+        </select>
+      </label>
+      {profileError !== undefined && (
+        <p className="nx-field-note is-error" role="alert">{profileError}</p>
+      )}
+      {selectedProfile !== undefined && (
+        <div className="nx-agent-panel" data-testid="create-team-profile-summary">
+          <p className="nx-field-note">
+            Coordinator <Code>@{selectedProfile.coordinator_handle}</Code> Â· {selectedProfile.members.length} agents
+          </p>
+          <ul>
+            {selectedProfile.members.map((member) => (
+              <li key={member.handle}>@{member.handle} Â· {member.harness}</li>
+            ))}
+          </ul>
+          <Button
+            variant="quiet"
+            type="button"
+            onClick={() => {
+              setProfileError(undefined);
+              void deleteTeamProfile(selectedProfile.id, selectedProfile.version, { token: props.token() }).then(
+                () => {
+                  setProfiles((items) => items.filter((profile) => profile.id !== selectedProfile.id));
+                  setProfileId('');
+                },
+                (failure: unknown) => setProfileError(
+                  failure instanceof Error ? failure.message : String(failure),
+                ),
+              );
+            }}
+          >
+            Delete profile
+          </Button>
+        </div>
+      )}
+      {selectedProfile === undefined && (
+      <>
       <div className="nx-agent-panel">
           <AgentIdentityControls
             adapters={adapters}
@@ -234,6 +302,8 @@ export function CreateChannelDialog(props: {
             </>
           )}
       </div>
+      </>
+      )}
       </Section>
       {error !== undefined && <p className="nx-field-note is-error" role="alert">{error}</p>}
       </div>

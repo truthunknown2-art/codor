@@ -3234,6 +3234,61 @@ describe('Phase 3 usability core', () => {
       .toContain('fixture spawn failed');
   });
 
+  it('creates a team from one channel cwd, persists partial failure, and retries safely', () => {
+    const profile = daemon.saveTeamProfile({
+      id: 'production', name: 'Production', coordinator_handle: 'planner',
+      members: [
+        {
+          handle: 'planner', display_name: 'Planner', harness: 'fake', purpose: 'Coordinate',
+          policy: 'workspace-write', accent: 'violet', billing_mode: 'subscription', required: true,
+        },
+        {
+          handle: 'coder', display_name: 'Coder', harness: 'fake', purpose: 'Implement',
+          policy: 'full-access', accent: 'indigo', billing_mode: 'subscription', required: true,
+        },
+      ],
+    }, 0);
+    vi.spyOn(fake, 'spawn').mockImplementationOnce(() => { throw new Error('temporary spawn failure'); });
+
+    const cwd = testCwd('profile-project');
+    const created = daemon.createRoom({
+      name: 'Profile Project', owner: { handle: 'project-owner', display_name: 'Project Owner' },
+      cwd, team_profile_id: profile.id,
+    });
+    expect(created.room.config).toMatchObject({
+      cwd,
+      starting_agent_handle: 'planner',
+      team_setup: {
+        profile_id: profile.id,
+        profile_version: profile.version,
+        ready: false,
+        members: [
+          { handle: 'planner', status: 'failed', error: 'temporary spawn failure' },
+          { handle: 'coder', status: 'ready' },
+        ],
+      },
+    });
+    expect(daemon.store.getMemberByHandle(created.room.id, 'coder')).toMatchObject({
+      cwd, purpose: 'Implement', accent: 'indigo', billing_mode: 'subscription',
+    });
+
+    const retried = daemon.retryTeamMember(created.room.id, 'planner');
+    expect(retried).toMatchObject({ cwd, purpose: 'Coordinate', accent: 'violet' });
+    expect(daemon.store.getRoom(created.room.id)?.config.team_setup?.ready).toBe(true);
+    expect(() => daemon.retryTeamMember(created.room.id, 'planner')).toThrow('@planner is already ready');
+  });
+
+  it('refuses an unavailable provider before saving a reusable profile', () => {
+    expect(() => daemon.saveTeamProfile({
+      id: 'missing', name: 'Missing', coordinator_handle: 'planner',
+      members: [{
+        handle: 'planner', display_name: 'Planner', harness: 'not-installed',
+        billing_mode: 'unknown', required: true,
+      }],
+    }, 0)).toThrow("no adapter registered for harness 'not-installed'");
+    expect(daemon.store.getTeamProfile('missing')).toBeUndefined();
+  });
+
   // harn:assume starting-agent-name-derives-one-valid-identity-v6 ref=starting-agent-create-regression
   // harn:assume spawn-default-cwd-is-absolute-or-empty ref=implicit-starting-agent-cwd-regression
   it('persists friendly starting identity and an implicit absolute channel cwd', () => {
@@ -3814,6 +3869,21 @@ describe('changing an agent keeps the agent', () => {
     const updated = daemon.configureMember('eng', alpha.id, { model: null, thinking: null }, {});
     expect(updated.model).toBeUndefined();
     expect(updated.thinking).toBeUndefined();
+  });
+
+  it('updates purpose, accent, and billing on the same member for its next turn', async () => {
+    const alpha = spawnThinker();
+    const updated = daemon.configureMember('eng', alpha.id, {
+      purpose: 'Review every claim', accent: 'violet', billing_mode: 'subscription',
+    }, { actor: richardId() });
+    expect(updated).toMatchObject({
+      id: alpha.id, purpose: 'Review every claim', accent: 'violet', billing_mode: 'subscription',
+    });
+
+    thinkingFake.enqueue({ kind: 'complete', final_text: '@richard reviewed' });
+    daemon.postHumanMessage('eng', '@alpha review');
+    await daemon.settle();
+    expect(thinkingFake.deliveries.at(-1)?.payload).toContain('@alpha (agent, Review every claim)');
   });
 
   it('survives a switchboard restart', async () => {

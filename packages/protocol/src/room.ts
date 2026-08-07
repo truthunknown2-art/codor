@@ -10,6 +10,7 @@ import {
   PolicySchema,
   ThinkingLevelSchema,
 } from './adapter.js';
+import { TeamSetupSchema } from './profile.js';
 
 // harn:assume brakes-default-off ref=room-config-brakes
 /**
@@ -29,6 +30,7 @@ export const RoomConfigSchema = z.object({
   // harn:assume channel-starting-agent-handle-persisted ref=starting-agent-config-field
   starting_agent_handle: AssignableHandleSchema.optional(),
   // harn:end channel-starting-agent-handle-persisted
+  team_setup: TeamSetupSchema.optional(),
   // harn:end channel-create-request-contract
   // harn:assume bridged-room-wears-banner-v5 ref=bridged-room-config
   bridged: z.boolean().default(false),
@@ -147,7 +149,11 @@ export const CreateRoomRequestSchema = z.object({
   color: z.string().min(1).optional(),
   cwd: z.string().min(1).optional(),
   starting_agent: StartingAgentSchema.optional(),
-});
+  team_profile_id: z.string().trim().min(1).max(128).optional(),
+}).refine(
+  (request) => request.starting_agent === undefined || request.team_profile_id === undefined,
+  { message: 'choose either a starting agent or a team profile', path: ['team_profile_id'] },
+);
 export type CreateRoomRequest = z.infer<typeof CreateRoomRequestSchema>;
 // harn:end channel-create-request-contract
 

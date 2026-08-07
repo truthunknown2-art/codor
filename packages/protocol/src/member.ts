@@ -176,7 +176,7 @@ export const MemberSchema = z
     accent: MemberAccentSchema.optional(),
     billing_mode: BillingModeSchema.optional(),
     // harn:assume member-purpose-protocol-metadata ref=member-purpose-field
-    purpose: z.string().optional(),
+    purpose: z.string().max(10_000).optional(),
     // harn:end member-purpose-protocol-metadata
     // agent + extension only:
     harness: z.string().min(1).optional(), // adapter id, open set

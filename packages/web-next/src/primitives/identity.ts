@@ -6,8 +6,11 @@ export type AccentName = 'indigo' | 'green' | 'violet' | 'user';
 
 const AGENT_ORDER: AccentName[] = ['indigo', 'green', 'violet'];
 
-export function memberAccent(member: Pick<Member, 'kind' | 'handle'>): AccentName {
+export function memberAccent(member: Pick<Member, 'kind' | 'handle' | 'accent'>): AccentName {
   if (member.kind === 'human') return 'user';
+  if (member.accent === 'indigo' || member.accent === 'green' || member.accent === 'violet') {
+    return member.accent;
+  }
   let hash = 0;
   for (const ch of member.handle) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
   return AGENT_ORDER[hash % AGENT_ORDER.length] ?? 'indigo';

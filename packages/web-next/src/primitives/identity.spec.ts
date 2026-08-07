@@ -12,6 +12,10 @@ describe('memberAccent', () => {
     expect(memberAccent({ kind: 'agent', handle: 'fable' })).toBe(first);
     expect(['indigo', 'green', 'violet']).toContain(first);
   });
+
+  it('uses an explicitly configured agent accent everywhere', () => {
+    expect(memberAccent({ kind: 'agent', handle: 'planner', accent: 'violet' })).toBe('violet');
+  });
 });
 
 describe('initials', () => {
