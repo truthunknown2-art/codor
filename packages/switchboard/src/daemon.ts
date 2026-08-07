@@ -26,6 +26,7 @@ import type {
   PendingInteraction,
   ProjectDocument,
   ProjectDocumentInput,
+  ProjectMutation,
   ProducedArtifact,
   ProducedArtifactError,
   Role,
@@ -57,6 +58,7 @@ import {
   findAcpProviderDefinition,
 } from './acp-providers.js';
 import { BlobStore } from './blobs.js';
+import { applyProjectMutation } from './project.js';
 import {
   executableOnPath,
   type RegisteredHarnessAdapter,
@@ -5202,6 +5204,19 @@ export class Daemon {
     const project = this.store.saveProject(input, expectedVersion);
     this.emit(input.room, { type: 'project', seq: this.store.currentSeq(input.room), project });
     return project;
+  }
+
+  mutateProject(room: string, actorId: string, mutation: ProjectMutation): ProjectDocument {
+    const actor = this.store.getMember(room, actorId);
+    if (!actor) throw new Error(`no such room member: ${actorId}`);
+    const input = applyProjectMutation({
+      room,
+      actor,
+      current: this.store.getProject(room),
+      member: (id) => this.store.getMember(room, id),
+      messageExists: (id) => this.store.getMessage(room, id) !== undefined,
+    }, mutation);
+    return this.saveProject(input, mutation.expected_version);
   }
 
   readRunBlob(room: string, msgId: number): WireEvent[] {

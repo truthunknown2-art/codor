@@ -1421,6 +1421,40 @@ describe('team profile API', () => {
 });
 
 describe('WebSocket', () => {
+  it('applies versioned project acts and rejects a non-coordinator member', async () => {
+    const owner = daemon.ownerOf('eng');
+    const client = await connect();
+    client.ws.send(JSON.stringify({ type: 'subscribe', room: 'eng', since_seq: 0 }));
+    await client.next((frame) => frame.type === 'sync_complete');
+    client.ws.send(JSON.stringify({
+      type: 'act', room: 'eng', act: {
+        act: 'project_mutate', mutation: {
+          op: 'init', expected_version: 0, title: 'Canonical', objective: 'One source',
+          coordinator: owner.id, guarded_autopilot: false,
+        },
+      },
+    }));
+    await expect(client.next((frame) => frame.type === 'project')).resolves.toMatchObject({
+      project: { title: 'Canonical', version: 1 },
+    });
+
+    const memberClient = await connectAs(MEMBER_TOKEN);
+    memberClient.ws.send(JSON.stringify({ type: 'subscribe', room: 'eng', since_seq: 0 }));
+    await memberClient.next((frame) => frame.type === 'sync_complete');
+    memberClient.ws.send(JSON.stringify({
+      type: 'act', room: 'eng', act: {
+        act: 'project_mutate', mutation: {
+          op: 'add_milestone', expected_version: 1, id: 'm1', title: 'Build',
+        },
+      },
+    }));
+    await expect(memberClient.next((frame) => frame.type === 'error'))
+      .resolves.toMatchObject({ message: expect.stringContaining('only the coordinator or owner') });
+    expect(daemon.store.getProject('eng')?.version).toBe(1);
+    client.ws.close();
+    memberClient.ws.close();
+  });
+
   it('lists durable team profiles and hydrates then streams project state', async () => {
     daemon.store.saveTeamProfile({
       id: 'production', name: 'Production', coordinator_handle: 'planner',

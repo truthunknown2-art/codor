@@ -109,3 +109,64 @@ export const ProjectDocumentSchema = z.object({
 export type ProjectDocument = z.infer<typeof ProjectDocumentSchema>;
 
 export type ProjectDocumentInput = Omit<ProjectDocument, 'version' | 'created_ts' | 'updated_ts'>;
+
+const mutationBase = { expected_version: z.number().int().nonnegative() };
+
+export const ProjectMutationSchema = z.discriminatedUnion('op', [
+  z.object({
+    ...mutationBase,
+    op: z.literal('init'),
+    title: boundedText(300),
+    objective: boundedText(10_000),
+    coordinator: MemberIdSchema,
+    guarded_autopilot: z.boolean().default(false),
+  }).strict(),
+  z.object({
+    ...mutationBase,
+    op: z.literal('add_milestone'),
+    id: boundedText(128),
+    title: boundedText(300),
+  }).strict(),
+  z.object({
+    ...mutationBase,
+    op: z.literal('add_task'),
+    id: boundedText(128),
+    milestone_id: boundedText(128),
+    title: boundedText(300),
+    description: boundedText(10_000),
+    acceptance_criteria: z.array(boundedText(1_000)).min(1).max(50),
+    dependencies: z.array(boundedText(128)).max(50).refine(unique, 'task dependencies must be unique'),
+    assignee: MemberIdSchema.optional(),
+    gatekeepers: z.array(MemberIdSchema).max(50).refine(unique, 'task gatekeepers must be unique'),
+    workspace_mode: ProjectWorkspaceModeSchema,
+  }).strict(),
+  z.object({
+    ...mutationBase,
+    op: z.literal('edit_task'),
+    task_id: boundedText(128),
+    title: boundedText(300).optional(),
+    description: boundedText(10_000).optional(),
+    acceptance_criteria: z.array(boundedText(1_000)).min(1).max(50).optional(),
+    dependencies: z.array(boundedText(128)).max(50).refine(unique, 'task dependencies must be unique').optional(),
+    gatekeepers: z.array(MemberIdSchema).max(50).refine(unique, 'task gatekeepers must be unique').optional(),
+    workspace_mode: ProjectWorkspaceModeSchema.optional(),
+  }).strict(),
+  z.object({ ...mutationBase, op: z.literal('assign'), task_id: boundedText(128), assignee: MemberIdSchema }).strict(),
+  z.object({ ...mutationBase, op: z.literal('block'), task_id: boundedText(128), note: boundedText(2_000) }).strict(),
+  z.object({
+    ...mutationBase,
+    op: z.literal('submit'),
+    task_id: boundedText(128),
+    evidence: z.array(ProjectEvidenceSchema).min(1).max(50),
+  }).strict(),
+  z.object({
+    ...mutationBase,
+    op: z.literal('review'),
+    task_id: boundedText(128),
+    decision: z.enum(['approved', 'changes_requested']),
+    note: boundedText(2_000).optional(),
+  }).strict(),
+  z.object({ ...mutationBase, op: z.literal('set_status'), status: ProjectStatusSchema }).strict(),
+  z.object({ ...mutationBase, op: z.literal('set_autopilot'), enabled: z.boolean() }).strict(),
+]);
+export type ProjectMutation = z.infer<typeof ProjectMutationSchema>;

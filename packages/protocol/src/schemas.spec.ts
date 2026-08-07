@@ -27,6 +27,7 @@ import {
   parseRunItemPayload,
   PendingInteractionSchema,
   ProjectDocumentSchema,
+  ProjectMutationSchema,
   PolicySchema, PostFrameSchema, VoiceNoteSchema,
   ReasoningSummaryPayloadSchema,
   RoomIdSchema,
@@ -51,6 +52,16 @@ const DELIVERY_ID = '018f47b4-7f9f-7d3b-a064-52f004c2b782';
 const TS = '2026-07-10T07:00:00.000Z';
 
 describe('project and team profile documents', () => {
+  it('requires optimistic versions and bounded operation-specific project mutations', () => {
+    expect(ProjectMutationSchema.safeParse({
+      op: 'submit', expected_version: 4, task_id: 't1',
+      evidence: [{ type: 'check', name: 'tests', result: 'passed' }],
+    }).success).toBe(true);
+    expect(ProjectMutationSchema.safeParse({
+      op: 'submit', task_id: 't1', evidence: [],
+    }).success).toBe(false);
+  });
+
   it('accepts bounded durable state and rejects dangling project references', () => {
     const base = {
       room: 'eng',

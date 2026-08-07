@@ -10,6 +10,9 @@ import {
   type Delivery,
   type Member,
   type Message,
+  type ProjectDocument,
+  type ProjectEvidence,
+  type ProjectMutation,
   type RunSearchHit,
   type ServerFrame,
 } from '@codor/protocol';
@@ -171,6 +174,7 @@ interface RoomSnapshot {
   members: Map<string, Member>;
   messages: Map<number, Message>;
   deliveries: Map<string, Delivery>;
+  project?: ProjectDocument;
 }
 
 // harn:assume cli-waits-consume-only-matching-deliveries ref=collaboration-room-sync
@@ -179,6 +183,7 @@ async function syncRoom(client: ProtocolClient, room: string): Promise<RoomSnaps
   const members = new Map<string, Member>();
   const messages = new Map<number, Message>();
   const deliveries = new Map<string, Delivery>();
+  let project: ProjectDocument | undefined;
   client.send({ type: 'subscribe', room, since_seq: 0 });
   for (;;) {
     const frame = await client.next();
@@ -187,11 +192,49 @@ async function syncRoom(client: ProtocolClient, room: string): Promise<RoomSnaps
     else if (frame.type === 'member') members.set(frame.member.id, frame.member);
     else if (frame.type === 'message') messages.set(frame.message.id, frame.message);
     else if (frame.type === 'inbox') deliveries.set(frame.delivery.id, frame.delivery);
+    else if (frame.type === 'project') project = frame.project;
     else if (frame.type === 'sync_complete') {
       if (!self) throw new Error('channel subscription did not identify the caller');
-      return { self, members, messages, deliveries };
+      return { self, members, messages, deliveries, ...(project && { project }) };
     }
   }
+}
+
+function projectMember(snapshot: RoomSnapshot, selector: string): Member {
+  const member = snapshot.members.get(selector)
+    ?? [...snapshot.members.values()].find((candidate) => candidate.handle === selector);
+  if (!member || member.removed_ts !== undefined) throw new Error(`no active channel member '${selector}'`);
+  return member;
+}
+
+async function mutateProject(
+  client: ProtocolClient,
+  room: string,
+  mutation: ProjectMutation,
+): Promise<ProjectDocument> {
+  client.send({ type: 'act', room, act: { act: 'project_mutate', mutation } });
+  for (;;) {
+    const frame = await client.next();
+    if (frame.type === 'error') throw new Error(frame.message);
+    if (frame.type === 'project' && frame.project.room === room
+      && frame.project.version > mutation.expected_version) return frame.project;
+  }
+}
+
+function submissionEvidence(options: {
+  commit?: string;
+  message?: string;
+  pr?: string;
+  note?: string;
+  check?: string;
+}): ProjectEvidence[] {
+  return [
+    ...(options.commit ? [{ type: 'commit' as const, sha: options.commit }] : []),
+    ...(options.message ? [{ type: 'message' as const, message_id: parsePositiveInteger(options.message, '--message') }] : []),
+    ...(options.pr ? [{ type: 'pr' as const, url: options.pr }] : []),
+    ...(options.note ? [{ type: 'note' as const, text: options.note }] : []),
+    ...(options.check ? [{ type: 'check' as const, name: options.check, result: 'passed' as const }] : []),
+  ];
 }
 
 const ownQueuedDeliveries = (snapshot: RoomSnapshot): Delivery[] =>
@@ -526,6 +569,165 @@ export function createProgram(context: CliContext = {}): Command {
       }
     });
   });
+
+  const project = program.command('project').description('manage the canonical channel project');
+  project
+    .command('show')
+    .requiredOption('-r, --channel <channel>', 'channel id')
+    .action(async (options: ChannelOptions) => {
+      await withClient(async (client) => {
+        const snapshot = await syncRoom(client, options.channel);
+        out(JSON.stringify(snapshot.project ?? null, null, 2));
+      });
+    });
+  project
+    .command('init')
+    .requiredOption('-r, --channel <channel>', 'channel id')
+    .requiredOption('--title <title>', 'project title')
+    .requiredOption('--objective <objective>', 'project objective')
+    .requiredOption('--coordinator <member>', 'coordinator handle or member id')
+    .option('--autopilot', 'enable guarded autopilot')
+    .action(async (options: ChannelOptions & {
+      title: string; objective: string; coordinator: string; autopilot?: boolean;
+    }) => {
+      await withClient(async (client) => {
+        const snapshot = await syncRoom(client, options.channel);
+        if (snapshot.project) throw new Error('project is already initialized');
+        const coordinator = projectMember(snapshot, options.coordinator);
+        const saved = await mutateProject(client, options.channel, {
+          op: 'init', expected_version: 0, title: options.title, objective: options.objective,
+          coordinator: coordinator.id, guarded_autopilot: options.autopilot === true,
+        });
+        out(`project ${saved.version}\t${saved.status}`);
+      });
+    });
+  project
+    .command('add')
+    .argument('<id>', 'task id')
+    .requiredOption('-r, --channel <channel>', 'channel id')
+    .requiredOption('--title <title>', 'task title')
+    .requiredOption('--description <description>', 'task description')
+    .requiredOption('--accept <criterion...>', 'acceptance criteria')
+    .option('--milestone <id>', 'milestone id', 'm1')
+    .option('--milestone-title <title>', 'title when creating a missing milestone', 'Milestone 1')
+    .option('--depends <task...>', 'dependency task ids')
+    .option('--assignee <member>', 'assignee handle or member id')
+    .option('--gatekeeper <member...>', 'gatekeeper handles or member ids')
+    .option('--read-only', 'task does not write the workspace')
+    .action(async (id: string, options: ChannelOptions & {
+      title: string; description: string; accept: string[]; milestone: string; milestoneTitle: string;
+      depends?: string[]; assignee?: string; gatekeeper?: string[]; readOnly?: boolean;
+    }) => {
+      await withClient(async (client) => {
+        const snapshot = await syncRoom(client, options.channel);
+        let current = snapshot.project;
+        if (!current) throw new Error('project is not initialized');
+        if (!current.milestones.some((milestone) => milestone.id === options.milestone)) {
+          current = await mutateProject(client, options.channel, {
+            op: 'add_milestone', expected_version: current.version,
+            id: options.milestone, title: options.milestoneTitle,
+          });
+        }
+        const assignee = options.assignee ? projectMember(snapshot, options.assignee).id : undefined;
+        const gatekeepers = (options.gatekeeper ?? []).map((selector) => projectMember(snapshot, selector).id);
+        const saved = await mutateProject(client, options.channel, {
+          op: 'add_task', expected_version: current.version, id, milestone_id: options.milestone,
+          title: options.title, description: options.description,
+          acceptance_criteria: options.accept, dependencies: options.depends ?? [],
+          ...(assignee && { assignee }), gatekeepers,
+          workspace_mode: options.readOnly === true ? 'read_only' : 'write',
+        });
+        out(`task ${id}\t${saved.tasks.find((task) => task.id === id)?.status ?? 'saved'}\tv${saved.version}`);
+      });
+    });
+  project
+    .command('assign')
+    .argument('<task>', 'task id')
+    .argument('<member>', 'assignee handle or member id')
+    .requiredOption('-r, --channel <channel>', 'channel id')
+    .action(async (task: string, member: string, options: ChannelOptions) => {
+      await withClient(async (client) => {
+        const snapshot = await syncRoom(client, options.channel);
+        if (!snapshot.project) throw new Error('project is not initialized');
+        const assignee = projectMember(snapshot, member);
+        const saved = await mutateProject(client, options.channel, {
+          op: 'assign', expected_version: snapshot.project.version, task_id: task, assignee: assignee.id,
+        });
+        out(`task ${task}\t@${assignee.handle}\tv${saved.version}`);
+      });
+    });
+  project
+    .command('block')
+    .argument('<task>', 'task id')
+    .requiredOption('-r, --channel <channel>', 'channel id')
+    .requiredOption('--note <note>', 'blocking reason')
+    .action(async (task: string, options: ChannelOptions & { note: string }) => {
+      await withClient(async (client) => {
+        const snapshot = await syncRoom(client, options.channel);
+        if (!snapshot.project) throw new Error('project is not initialized');
+        const saved = await mutateProject(client, options.channel, {
+          op: 'block', expected_version: snapshot.project.version, task_id: task, note: options.note,
+        });
+        out(`task ${task}\tblocked\tv${saved.version}`);
+      });
+    });
+  project
+    .command('submit')
+    .argument('<task>', 'task id')
+    .requiredOption('-r, --channel <channel>', 'channel id')
+    .option('--commit <sha>', '40-character commit SHA')
+    .option('--message <id>', 'Codor message id')
+    .option('--pr <url>', 'pull request URL')
+    .option('--check <name>', 'passed check name')
+    .option('--note <text>', 'concise evidence note')
+    .action(async (task: string, options: ChannelOptions & {
+      commit?: string; message?: string; pr?: string; check?: string; note?: string;
+    }) => {
+      await withClient(async (client) => {
+        const snapshot = await syncRoom(client, options.channel);
+        if (!snapshot.project) throw new Error('project is not initialized');
+        const evidence = submissionEvidence(options);
+        if (evidence.length === 0) throw new Error('submit at least one evidence option');
+        const saved = await mutateProject(client, options.channel, {
+          op: 'submit', expected_version: snapshot.project.version, task_id: task, evidence,
+        });
+        out(`task ${task}\t${saved.tasks.find((candidate) => candidate.id === task)?.status ?? 'submitted'}\tv${saved.version}`);
+      });
+    });
+  project
+    .command('review')
+    .argument('<task>', 'task id')
+    .requiredOption('-r, --channel <channel>', 'channel id')
+    .requiredOption('--decision <decision>', 'approved or changes-requested')
+    .option('--note <note>', 'review note')
+    .action(async (task: string, options: ChannelOptions & { decision: string; note?: string }) => {
+      if (!['approved', 'changes-requested'].includes(options.decision)) {
+        throw new Error('--decision must be approved or changes-requested');
+      }
+      await withClient(async (client) => {
+        const snapshot = await syncRoom(client, options.channel);
+        if (!snapshot.project) throw new Error('project is not initialized');
+        const saved = await mutateProject(client, options.channel, {
+          op: 'review', expected_version: snapshot.project.version, task_id: task,
+          decision: options.decision === 'approved' ? 'approved' : 'changes_requested',
+          ...(options.note && { note: options.note }),
+        });
+        out(`task ${task}\t${saved.tasks.find((candidate) => candidate.id === task)?.status ?? 'reviewed'}\tv${saved.version}`);
+      });
+    });
+  project
+    .command('close')
+    .requiredOption('-r, --channel <channel>', 'channel id')
+    .action(async (options: ChannelOptions) => {
+      await withClient(async (client) => {
+        const snapshot = await syncRoom(client, options.channel);
+        if (!snapshot.project) throw new Error('project is not initialized');
+        const saved = await mutateProject(client, options.channel, {
+          op: 'set_status', expected_version: snapshot.project.version, status: 'completed',
+        });
+        out(`project ${saved.version}\tcompleted`);
+      });
+    });
 
   program
     .command('serve')

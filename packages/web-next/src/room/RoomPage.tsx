@@ -1,4 +1,4 @@
-import { ChevronLeft, MoreVertical, Plus, Search, Settings, Share2, Users, X } from 'lucide-react';
+import { ChevronLeft, ClipboardList, MoreVertical, Plus, Search, Settings, Share2, Users, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import type { Connection } from '@runtime/ws.js';
@@ -24,6 +24,7 @@ import { CreateChannelDialog } from './CreateChannel.js';
 import { HoldBanner, InboxControl, SearchOverlay } from './panels.js';
 import { Transcript } from './Transcript.js';
 import { costProvenanceLabel } from './spend-label.js';
+import { ProjectBoard } from './ProjectBoard.js';
 import { SettingsPage } from '../surfaces/SettingsPage.js';
 import {
   computerSessions,
@@ -146,6 +147,7 @@ function MountedRoomPage(props: {
   const isMobile = useIsMobile();
   const [surface, setSurface] = useState<'channels' | 'room'>('room');
   const [mobileContext, setMobileContext] = useState(false);
+  const [boardOpen, setBoardOpen] = useState(false);
   const [responsiveContext, setResponsiveContext] = useState(false);
 
   // The inline context island collapses only at laptop/tablet widths. If an
@@ -192,9 +194,11 @@ function MountedRoomPage(props: {
             room={room}
             connection={connection}
             token={token}
+            onBoard={() => setBoardOpen(true)}
             mobile={{
               onBack: () => setSurface('channels'),
               onContext: () => setMobileContext(true),
+              onBoard: () => setBoardOpen(true),
             }}
           />
         )}
@@ -205,6 +209,11 @@ function MountedRoomPage(props: {
             </button>
             <ContextPanel room={room} token={token} connection={connection} />
           </div>
+        )}
+        {boardOpen && surface === 'room' && (
+          <Modal label="Project board" testid="project-board-modal" wide onClose={() => setBoardOpen(false)}>
+            <ProjectBoard room={room} connection={connection} onClose={() => setBoardOpen(false)} />
+          </Modal>
         )}
       </div>
     );
@@ -218,6 +227,7 @@ function MountedRoomPage(props: {
         connection={connection}
         token={token}
         onContext={() => setResponsiveContext(true)}
+        onBoard={() => setBoardOpen(true)}
       />
       <ContextPanel room={room} token={token} connection={connection} />
       {responsiveContext && (
@@ -238,6 +248,11 @@ function MountedRoomPage(props: {
             </header>
             <ContextPanel room={room} token={token} connection={connection} />
           </div>
+        </Modal>
+      )}
+      {boardOpen && (
+        <Modal label="Project board" testid="project-board-modal" wide onClose={() => setBoardOpen(false)}>
+          <ProjectBoard room={room} connection={connection} onClose={() => setBoardOpen(false)} />
         </Modal>
       )}
     </div>
@@ -415,7 +430,8 @@ function ChatPanel(props: {
   connection: Connection;
   token: () => string;
   onContext?: () => void;
-  mobile?: { onBack: () => void; onContext: () => void };
+  onBoard: () => void;
+  mobile?: { onBack: () => void; onContext: () => void; onBoard: () => void };
 }) {
   const room = useClientStore((state) => roomSlice(state, props.room).room);
   const meter = useClientStore((state) => roomSlice(state, props.room).meter);
@@ -444,6 +460,7 @@ function ChatPanel(props: {
               {workingAgent !== undefined ? `@${workingAgent} is working…` : connected ? 'live' : 'reconnecting…'}
             </span>
           </div>
+          <IconButton icon={ClipboardList} label="Open project board" data-testid="project-board-trigger" onClick={props.mobile.onBoard} />
           <IconButton icon={MoreVertical} label="Channel details" data-testid="mobile-kebab" onClick={props.mobile.onContext} />
         </header>
         <HoldBanner room={props.room} connection={props.connection} />
@@ -468,6 +485,9 @@ function ChatPanel(props: {
           {/* harn:end estimated-cost-is-advisory-not-spend-brake-input */}
         </div>
         <div className="nx-chat-actions">
+          <button className="nx-board-trigger" data-testid="project-board-trigger" onClick={props.onBoard}>
+            <ClipboardList size={16} aria-hidden="true" /> Board
+          </button>
           <IconButton
             icon={Users}
             label="Open members and context"

@@ -12,7 +12,7 @@ import { MemberIdSchema, MessageIdSchema, RoomIdSchema, SeqSchema, TimestampSche
 import { AssignableHandleSchema, BillingModeSchema, MemberAccentSchema } from './member.js';
 import { MemberSchema } from './member.js';
 import { MessageSchema, VoiceNoteSchema } from './message.js';
-import { ProjectDocumentSchema } from './project.js';
+import { ProjectDocumentSchema, ProjectMutationSchema } from './project.js';
 import { TeamProfileSchema } from './profile.js';
 import { RoomMeterSchema, RoomSchema, RoomSupportSchema } from './room.js';
 
@@ -206,6 +206,7 @@ export const ActSchema = z.discriminatedUnion('act', [
     act: z.literal('retry_run'),
     message_id: MessageIdSchema,
   }),
+  z.object({ act: z.literal('project_mutate'), mutation: ProjectMutationSchema }),
 ])
   // harn:assume named-acp-provider-selection-resolves-to-private-structured-launch ref=acp-provider-spawn-act-schema
   // A discriminated union cannot refine a single member, so the ACP spawn one-of is
