@@ -45,7 +45,7 @@ test.describe('header', () => {
     await expect(page.locator('.nx-chat-title h1')).toHaveText('Engineering');
     await expect(page.locator('.nx-chat-header .nx-status')).toHaveText(/Live/);
     await expect(page.getByTestId('meter')).toHaveText(
-      /^\d+ members · \d+ turns · [\d.,KM]+ tokens · \$\d+\.\d{2} today$/,
+      /^\d+ members · \d+ turns · [\d.,KM]+ tokens · \$\d+\.\d{2} provider-reported today$/,
     );
   });
 });

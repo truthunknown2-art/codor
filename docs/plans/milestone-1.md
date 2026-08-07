@@ -347,6 +347,8 @@ Verification evidence:
   backfill for existing agents.
 - The focused desktop/mobile channel-state browser flow passed 1/1, covering
   coloured channel previews, working status, and the responsive mobile header.
+- The three browser suites affected by the new cost and mention markup passed
+  18/18 tests after their acceptance assertions were updated.
 - The six light and six dark text accents measured between 5.02:1 and 12.06:1
   against their chat surfaces.
 - The broad local Switchboard run retained only the inherited Windows

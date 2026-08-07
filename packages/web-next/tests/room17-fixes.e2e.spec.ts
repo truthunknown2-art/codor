@@ -69,7 +69,7 @@ test.describe('mention highlight', () => {
     const msg = page.locator('article.is-mentioned').filter({ hasText: 'remember to rotate the keys' }).first();
     await expect(msg).toBeVisible();
     await expect(msg).toHaveAttribute('data-mentions-me', 'true');
-    await expect(msg.locator('.nx-mention-self')).toHaveText('@richard');
+    await expect(msg.locator('.nx-agent-mention.is-self')).toHaveText('@richard');
 
     await page.waitForTimeout(300);
     const { default: AxeBuilder } = await import('@axe-core/playwright');

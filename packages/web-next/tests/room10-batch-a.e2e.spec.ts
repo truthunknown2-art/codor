@@ -119,7 +119,7 @@ test.describe('markdown prose', () => {
     // Human messages get the same treatment.
     const message = page.locator('.nx-prose', { hasText: 'print the deploy plan' });
     await expect(message.locator('code')).toHaveText('inline code');
-    await expect(message.locator('strong')).toHaveText('bold text');
+    await expect(message.locator('strong:not(.nx-agent-mention)')).toHaveText('bold text');
 
     // The markdown-heavy room stays axe-clean in both themes.
     await page.waitForTimeout(350);
