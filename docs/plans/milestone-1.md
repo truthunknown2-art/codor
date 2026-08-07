@@ -270,6 +270,41 @@ copied database.
 Completion: every dead or unreachable state explains the cause and offers only
 safe supported actions.
 
+WP6 result (2026-08-07): implementation and local verification complete.
+Members now retain a structured failure code, exact summary, originating run,
+timestamp, real resume capability, and one supported recovery action. Native
+sessions revive only when their adapter can restore them; an idle
+non-resumable member receives one bounded fresh restart; unsupported or failed
+recovery offers Replace and continue. Replacement preserves the member's
+configuration and purpose, transfers project ownership, and receives a bounded
+brief assembled from canonical project state, relevant messages, and verified
+read-only Git state. Failed replacement leaves the original dead member and its
+evidence intact.
+
+Dead assignees now block their active project tasks, consume stale queued work,
+and disable guarded autopilot when the coordinator dies. Replacement reopens
+only tasks carrying that exact failure marker and redispatches them as a new
+revision. Uncertain active turns are never replayed by recovery.
+
+Verification evidence:
+
+- Protocol validation passed 212/212 tests; Protocol, Switchboard, and Web
+  production builds completed successfully.
+- The focused recovery daemon run passed 5/5: exact active-turn failure and
+  copied-database persistence, successful replacement and recovery brief,
+  failed replacement preservation, one-attempt fresh restart, and persisted
+  ACP native revive.
+- The affected authorization, store, and server suites passed 202 tests with
+  two existing platform skips. Two legacy removal and Copilot fail-closed
+  compatibility checks also passed.
+- The existing browser lifecycle check passed on isolated test ports, proving
+  that the dead-agent action changes to Revive, Restart, or Replace and continue
+  without disturbing the room.
+- The broader local Switchboard run retained only the inherited Windows
+  launcher, permission-mode, cleanup, and artifact-path exceptions documented
+  under WP1; the binding Ubuntu gate remains required before merge.
+- Production port 8137 and `C:\Users\pbirc\.codor` were not modified or restarted.
+
 ### WP7 - Identity, billing, and Git clarity
 
 Primary invariant: identity, money, and repository claims are consistent and

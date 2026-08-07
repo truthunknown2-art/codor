@@ -63,6 +63,8 @@ export const CAPABILITY_MINIMUM_ROLE: Record<HumanCapability, Role> = {
   configure: 'admin',
   rename: 'admin',
   revive: 'admin',
+  restart: 'admin',
+  replace_and_continue: 'admin',
   kill: 'admin',
   // harn:assume removed-members-remain-attribution-tombstones ref=member-removal-role-matrix
   remove: 'admin',

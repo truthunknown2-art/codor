@@ -106,7 +106,8 @@ CREATE TABLE IF NOT EXISTS members (
   removed_ts TEXT,
   tasks TEXT,                   -- AgentTaskList JSON projection; NULL when empty
   accent TEXT,
-  billing_mode TEXT NOT NULL DEFAULT 'unknown'
+  billing_mode TEXT NOT NULL DEFAULT 'unknown',
+  failure TEXT                  -- MemberFailure JSON; NULL while healthy
 );
 CREATE TABLE IF NOT EXISTS projects (
   room TEXT PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
@@ -366,6 +367,13 @@ function migrateMemberPresentation(db: Database.Database): void {
   }
   if (!columns.some((column) => column.name === 'billing_mode')) {
     db.exec("ALTER TABLE members ADD COLUMN billing_mode TEXT NOT NULL DEFAULT 'unknown'");
+  }
+}
+
+function migrateMemberFailure(db: Database.Database): void {
+  const columns = db.pragma('table_info(members)') as { name: string }[];
+  if (!columns.some((column) => column.name === 'failure')) {
+    db.exec('ALTER TABLE members ADD COLUMN failure TEXT');
   }
 }
 
@@ -953,6 +961,7 @@ interface MemberRow {
   removed_ts: string | null;
   limits: string | null;
   tasks: string | null;
+  failure: string | null;
 }
 
 interface MessageRow {
@@ -1094,6 +1103,7 @@ function memberFromRow(row: MemberRow): Member {
     // harn:end named-acp-provider-selection-resolves-to-private-structured-launch
     host: row.host ?? undefined,
     state: row.state ?? undefined,
+    failure: row.failure ? JSON.parse(row.failure) as unknown : undefined,
     custody: row.custody ?? undefined,
     parent: row.parent ?? undefined,
     role: row.role ?? undefined,
@@ -1434,6 +1444,7 @@ export class Store {
       migrateMemberContextWindow(this.db);
       migrateMemberAcpProvider(this.db);
       migrateMemberPresentation(this.db);
+      migrateMemberFailure(this.db);
       migrateMemberCredential(this.db);
       migrateMessageAck(this.db);
       migrateMessagePinned(this.db);
@@ -1700,8 +1711,8 @@ export class Store {
       .prepare(
         `INSERT INTO members (id, room, kind, handle, display_name, accent, billing_mode, purpose, harness, session_ref,
            cwd, policy, model, thinking, host, state, custody, parent, role, conventions_sent,
-           misaddressed, roster_stale, removed_ts, acp_provider)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           misaddressed, roster_stale, removed_ts, acp_provider, failure)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         validated.id,
@@ -1728,6 +1739,7 @@ export class Store {
         fromBool(validated.roster_stale),
         orNull(validated.removed_ts),
         orNull(validated.acp_provider),
+        validated.failure === undefined ? null : JSON.stringify(validated.failure),
       );
     // harn:end named-acp-provider-selection-resolves-to-private-structured-launch
     const seq = this.appendChange(room, 'member', validated.id);
@@ -1764,6 +1776,50 @@ export class Store {
         );
       }
       return inserted;
+    })();
+  }
+
+  replaceMember(
+    room: string,
+    memberId: string,
+    replacement: NewMember,
+    runtime: AgentRuntimeConfig = {},
+  ): { removed: Member; replacement: Member } {
+    return this.db.transaction(() => {
+      const existing = this.getMember(room, memberId);
+      if (!existing || existing.kind !== 'agent' || existing.removed_ts !== undefined) {
+        throw new Error(`no active agent member: ${memberId}`);
+      }
+      const removedTs = new Date().toISOString();
+      this.db.prepare('UPDATE members SET removed_ts = ? WHERE room = ? AND id = ?')
+        .run(removedTs, room, memberId);
+      this.appendChange(room, 'member', memberId);
+      const inserted = this.insertMember(room, replacement);
+      if (
+        runtime.acp_launch !== undefined ||
+        runtime.lifecycle !== undefined ||
+        runtime.usage_baseline !== undefined
+      ) {
+        this.db.prepare(
+          `UPDATE members
+           SET acp_launch = ?, session_lifecycle = ?, acp_usage_baseline = ?
+           WHERE room = ? AND id = ?`,
+        ).run(
+          runtime.acp_launch === undefined ? null : JSON.stringify(runtime.acp_launch),
+          runtime.lifecycle === undefined ? null : JSON.stringify(runtime.lifecycle),
+          runtime.usage_baseline === undefined ? null : JSON.stringify(runtime.usage_baseline),
+          room,
+          inserted.id,
+        );
+      }
+      this.db.prepare(
+        `UPDATE deliveries SET recipient = ?
+         WHERE room = ? AND recipient = ? AND state = 'queued'`,
+      ).run(inserted.id, room, memberId);
+      return {
+        removed: this.getMember(room, memberId)!,
+        replacement: inserted,
+      };
     })();
   }
 
@@ -1931,7 +1987,7 @@ export class Store {
              purpose = ?, harness = ?, session_ref = ?,
              cwd = ?, policy = ?, model = ?, thinking = ?, host = ?, state = ?, custody = ?,
              parent = ?, role = ?, conventions_sent = ?, misaddressed = ?, roster_stale = ?,
-             removed_ts = ?, limits = ?, tasks = ?, acp_provider = ?
+             removed_ts = ?, limits = ?, tasks = ?, acp_provider = ?, failure = ?
            WHERE room = ? AND id = ?`,
         )
         .run(
@@ -1960,6 +2016,7 @@ export class Store {
           // acp_provider is public locked identity: preserved from the merged member,
           // never rewritten by an ordinary Configure edit (harness stays locked too).
           orNull(merged.acp_provider),
+          merged.failure === undefined ? null : JSON.stringify(merged.failure),
           room,
           memberId,
         );

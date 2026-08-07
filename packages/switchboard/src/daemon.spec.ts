@@ -265,7 +265,7 @@ describe('guarded project delivery automation', () => {
   });
 
   it('blocks on an exact worker failure and never bypasses the configured turn brake', async () => {
-    createProject({
+    const { coder } = createProject({
       initialStatus: 'failed',
       initialText: '',
       initialError: 'compiler exited 17 at verified boundary',
@@ -279,12 +279,26 @@ describe('guarded project delivery automation', () => {
     expect(daemon.store.listMessages('eng', { limit: 100 })
       .some((message) => message.body.includes('compiler exited 17 at verified boundary'))).toBe(true);
     expect(project.tasks[0]?.dispatches?.reviews).toHaveLength(0);
+    expect(daemon.store.getMember('eng', coder.id)?.failure).toMatchObject({
+      code: 'turn_failed',
+      summary: 'compiler exited 17 at verified boundary',
+      resume_capability: 'native',
+      recommended_action: 'revive',
+      run_message_id: expect.any(Number),
+    });
+    expect(project.tasks[0]?.evidence).toContainEqual(expect.objectContaining({
+      type: 'note', text: expect.stringContaining(`[member-failure:${coder.id}]`),
+    }));
 
     await daemon.close();
     daemon = newDaemon();
+    expect(daemon.store.getMember('eng', coder.id)?.failure).toMatchObject({
+      code: 'turn_failed', summary: 'compiler exited 17 at verified boundary',
+    });
+    expect(daemon.store.getProject('eng')?.tasks[0]?.status).toBe('blocked');
     daemon.createRoom({ id: 'braked', name: 'Braked', owner: { handle: 'owner', display_name: 'Owner' } });
     const planner = daemon.spawnMember('braked', { harness: 'fake', handle: 'planner', cwd: testCwd('braked-planner') });
-    const coder = daemon.spawnMember('braked', { harness: 'fake', handle: 'coder', cwd: testCwd('braked-coder') });
+    const brakedCoder = daemon.spawnMember('braked', { harness: 'fake', handle: 'coder', cwd: testCwd('braked-coder') });
     let braked = daemon.mutateProject('braked', planner.id, {
       op: 'init', expected_version: 0, title: 'Brake', objective: 'Respect brakes',
       coordinator: planner.id, guarded_autopilot: true,
@@ -295,7 +309,7 @@ describe('guarded project delivery automation', () => {
     braked = daemon.mutateProject('braked', planner.id, {
       op: 'add_task', expected_version: braked.version, id: 't1', milestone_id: 'm1',
       title: 'Code', description: 'Do not start', acceptance_criteria: ['held'], dependencies: [],
-      assignee: coder.id, gatekeepers: [], workspace_mode: 'read_only',
+      assignee: brakedCoder.id, gatekeepers: [], workspace_mode: 'read_only',
     });
     daemon.store.updateRoomConfig('braked', { turn_brake: 1 });
     fake.enqueue({ kind: 'complete', final_text: 'work completed before the onward brake' });
@@ -308,6 +322,37 @@ describe('guarded project delivery automation', () => {
     expect(daemon.store.getDelivery('braked', coordinatorId!)?.state).toBe('held');
     expect(braked.tasks[0]?.status).toBe('done');
     expect(fake.deliveries.filter((delivery) => delivery.payload.includes('channel=braked'))).toHaveLength(1);
+  });
+
+  it('replaces a dead assignee with its full purpose and recovery brief, then redispatches', async () => {
+    const { coder } = createProject({
+      initialStatus: 'failed', initialText: '', initialError: 'ACP context exhausted',
+    });
+    await daemon.settle();
+    daemon.configureMember('eng', coder.id, {
+      purpose: 'Implement narrowly, measure every claim, and return exact evidence to the coordinator.',
+    });
+    fake.enqueue(
+      { kind: 'complete', final_text: 'recovery brief read' },
+      { kind: 'complete', final_text: 'replacement implementation measured and complete' },
+    );
+
+    const replacement = await daemon.replaceMemberAndContinue('eng', coder.id);
+    await daemon.settle();
+
+    expect(daemon.store.getMember('eng', coder.id)?.removed_ts).toBeDefined();
+    expect(replacement).toMatchObject({
+      handle: 'coder',
+      purpose: 'Implement narrowly, measure every claim, and return exact evidence to the coordinator.',
+      state: 'idle',
+    });
+    const project = daemon.store.getProject('eng')!;
+    expect(project.tasks[0]).toMatchObject({ assignee: replacement.id, status: 'in_review', revision: 1 });
+    const recovery = fake.deliveries.find((delivery) =>
+      delivery.payload.includes('[replacement recovery brief for @coder]'));
+    expect(recovery?.payload).toContain('ACP context exhausted');
+    expect(recovery?.payload).toContain('Do not infer that its uncertain active tool turn completed');
+    expect(recovery?.payload).toContain('Git:');
   });
 
   it('returns a task-linked collaboration barrier to the assignee before review', async () => {
@@ -1144,6 +1189,27 @@ describe('member management', () => {
     expect(daemon.store.getInteraction(interaction.id)!.state).toBe('orphaned');
     expect(daemon.store.getMember('eng', alpha.id)!.state).toBe('dead');
   });
+
+  it('keeps the original member and exact reason when replacement cannot start', async () => {
+    const alpha = spawnAgent('replace-failure');
+    daemon.killMember('eng', alpha.id);
+    vi.spyOn(fake, 'spawn').mockImplementationOnce(() => {
+      throw new Error('replacement executable missing');
+    });
+
+    await expect(daemon.replaceMemberAndContinue('eng', alpha.id)).rejects.toThrow(
+      'could not replace @replace-failure: replacement executable missing',
+    );
+    expect(daemon.store.getMember('eng', alpha.id)).toMatchObject({
+      removed_ts: undefined,
+      state: 'dead',
+      failure: {
+        code: 'replacement_failed',
+        summary: 'replacement executable missing',
+        recommended_action: 'replace_and_continue',
+      },
+    });
+  });
 });
 
 // harn:assume copilot-vscode-revive-requires-exact-live-cache ref=revive-session-regression
@@ -1290,6 +1356,49 @@ describe('copilot-vscode ephemeral revive', () => {
   });
 });
 // harn:end copilot-vscode-revive-requires-exact-live-cache
+
+describe('bounded fresh restart', () => {
+  it('offers one fresh restart only for an idle non-resumable failure', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'codor-bounded-restart-'));
+    const adapter = new FakeAdapter('ephemeral', { resume: false });
+    const local = new Daemon({
+      dbPath: join(root, 'switchboard.sqlite'), blobRoot: join(root, 'blobs'),
+      adapters: [adapter], homeDir: root, discoverModels: false,
+    });
+    try {
+      local.createRoom({ id: 'restart', name: 'Restart', owner: { handle: 'owner', display_name: 'Owner' } });
+      const member = local.spawnMember('restart', {
+        harness: 'ephemeral', handle: 'worker', cwd: root,
+      });
+      expect(local.killMember('restart', member.id).failure).toMatchObject({
+        resume_capability: 'fresh', recommended_action: 'restart',
+      });
+      vi.spyOn(adapter, 'spawn').mockImplementationOnce(() => {
+        throw new Error('native launcher unavailable');
+      });
+      expect(() => local.restartMember('restart', member.id)).toThrow(
+        'could not restart @worker: native launcher unavailable',
+      );
+      expect(local.store.getMember('restart', member.id)?.failure).toMatchObject({
+        code: 'restart_failed', restart_attempted: true,
+        recommended_action: 'replace_and_continue',
+      });
+      expect(() => local.restartMember('restart', member.id)).toThrow(
+        'cannot be safely restarted; replace it instead',
+      );
+      const healthy = local.spawnMember('restart', {
+        harness: 'ephemeral', handle: 'healthy', cwd: root,
+      });
+      local.killMember('restart', healthy.id);
+      expect(local.restartMember('restart', healthy.id)).toMatchObject({
+        state: 'idle', failure: undefined,
+      });
+    } finally {
+      await local.close({ force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('room bridges', () => {
   it('creates a post-only non-addressable bridge and routes retry-safe ingress', async () => {
@@ -3869,12 +3978,16 @@ describe('adapter model discovery', () => {
     expect(acpDaemon.store.getAgentRuntimeConfig('acp-room', member.id)?.lifecycle).toEqual({
       load: true, resume: true,
     });
+    expect(acpDaemon.killMember('acp-room', member.id).failure).toMatchObject({
+      resume_capability: 'native', recommended_action: 'revive',
+    });
     await acpDaemon.close();
 
     acpDaemon = new Daemon({
       dbPath, blobRoot: join(acpRoot, 'blobs'),
       adapters: [Object.assign(new AcpAdapter(), { configurable: true })], homeDir: acpRoot,
     });
+    acpDaemon.reviveMember('acp-room', member.id);
     acpDaemon.postHumanMessage('acp-room', '@helper second');
     await acpDaemon.settle();
     expect(readFileSync(log, 'utf8')).toContain('session/resume');

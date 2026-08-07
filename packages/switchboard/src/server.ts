@@ -1819,6 +1819,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               );
             } else if (act.act === 'rename') daemon.renameMember(frame.room, act.member_id, act.handle, act.display_name);
             else if (act.act === 'revive') daemon.reviveMember(frame.room, act.member_id);
+            else if (act.act === 'restart') daemon.restartMember(frame.room, act.member_id);
+            else if (act.act === 'replace_and_continue') {
+              void daemon.replaceMemberAndContinue(frame.room, act.member_id)
+                .catch((error: unknown) => send({
+                  type: 'error', message: String(error), ref: 'replace_and_continue',
+                }));
+            }
             else if (act.act === 'kill') daemon.killMember(frame.room, act.member_id);
             else if (act.act === 'remove') daemon.removeMember(frame.room, act.member_id);
             else if (act.act === 'pause') daemon.pauseMember(frame.room, act.member_id);
