@@ -149,6 +149,7 @@ describe('@codor/cli', () => {
       'project',
       'serve',
       'install',
+      'update',
       'spawn',
       'post',
       'tail',
