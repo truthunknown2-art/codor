@@ -146,6 +146,7 @@ describe('@codor/cli', () => {
     expect(createProgram().commands.map((command) => command.name())).toEqual([
       'up',
       'channels',
+      'project',
       'serve',
       'install',
       'spawn',
@@ -167,12 +168,33 @@ describe('@codor/cli', () => {
       'relay',
     ]);
     const program = createProgram();
+    expect(program.commands.find((command) => command.name() === 'project')?.commands.map((command) => command.name()))
+      .toEqual(['show', 'init', 'add', 'assign', 'block', 'submit', 'review', 'close']);
     expect(program.commands.find((command) => command.name() === 'spawn')?.options.map((option) => option.long))
       .toContain('--channel');
     expect(program.commands.flatMap((command) => command.options.map((option) => option.long)))
       .not.toContain('--room');
   });
   // harn:end human-facing-surfaces-call-rooms-channels
+
+  it('manages the same durable project state through the CLI', async () => {
+    daemon.spawnMember('eng', { harness: 'fake', handle: 'fable', cwd: dir });
+    daemon.spawnMember('eng', { harness: 'fake', handle: 'scout', cwd: dir });
+
+    await cli('project', 'init', '-r', 'eng', '--title', 'Project truth', '--objective', 'One durable board', '--coordinator', 'fable');
+    await cli('project', 'add', 't1', '-r', 'eng', '--title', 'Build board', '--description', 'Persist it', '--accept', 'Survives reload', '--assignee', 'fable', '--gatekeeper', 'scout');
+    await cli('project', 'submit', 't1', '-r', 'eng', '--note', 'Verified');
+    await cli('project', 'review', 't1', '-r', 'eng', '--decision', 'approved');
+    await cli('project', 'close', '-r', 'eng');
+
+    output = [];
+    await cli('project', 'show', '-r', 'eng');
+    expect(JSON.parse(output.join('\n'))).toMatchObject({
+      title: 'Project truth',
+      status: 'completed',
+      tasks: [{ id: 't1', status: 'done', evidence: [{ type: 'note', text: 'Verified' }] }],
+    });
+  });
 
   // harn:assume codor-runtime-identity-is-a-clean-break ref=runtime-identity-regression
   it('uses Codor runtime identity for the command, service, install target, and default paths', () => {

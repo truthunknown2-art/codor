@@ -1,6 +1,6 @@
 # Milestone 1: Production team workflow
 
-Status: approved; Work Packages 1-2 complete; Work Package 3 implementation and local verification complete
+Status: approved; Work Packages 1-3 complete; Work Package 4 implementation and local verification complete
 Upstream baseline: `rjx18/codor@3b587c75cc02a9580ffbdaaafc217fc4d12d8cf5`
 Fork: `truthunknown2-art/codor`
 Production boundary: port `8137` and `C:\Users\pbirc\.codor` must remain untouched until final acceptance.
@@ -139,7 +139,8 @@ provider validation, partial-spawn failure, retry, and mobile channel creation.
 Completion: a new channel can select a profile and visibly reach team-ready
 state.
 
-WP3 result (2026-08-06): implementation and local verification complete. Team
+WP3 result (2026-08-06): complete and merged in PR #4 at
+`d98f4d9cd781ba4956b7b353b652917d4f5f813b`. Team
 profiles can be created, updated from a current channel, listed, deleted, and
 selected during channel creation. One channel working directory is applied to
 every profile member. Required-member failures remain visible in durable room
@@ -178,6 +179,35 @@ CLI.
 
 Completion: the responsive header Board view and `codor project` commands use
 the same live state.
+
+WP4 result (2026-08-06): implementation and local verification complete. One
+versioned project per channel is now mutable through a server-side authorization
+and transition reducer. Owners can override, coordinators control structure,
+assignees submit or block, and every listed gatekeeper must approve before a
+write task completes. Dependencies unlock only after their prerequisites are
+done; revisions, evidence, and completed work remain in the durable document.
+The desktop/mobile Board modal and `codor project` CLI commands mutate and read
+that same synchronized state. Assignment delivery and automatic continuation
+remain intentionally deferred to WP5.
+
+Verification evidence:
+
+- Protocol validation passed 210/210 tests; the focused Switchboard project,
+  authorization, and server suites passed 119/119 with two existing platform
+  skips.
+- The complete web source suite passed 440/440 tests, and production builds for
+  Protocol, Switchboard, CLI, and Web completed successfully.
+- A focused CLI integration initialized a project, added gated work, submitted
+  evidence, approved and closed it, then read the completed durable document
+  through `codor project show`.
+- An isolated browser journey created the board, added a milestone and gated
+  task, submitted and approved it, completed the project, proved reload
+  persistence, and reopened the completed board at a 320px mobile viewport.
+- The full CLI suite passed 217 WP4/unrelated tests with 18 skips but retained
+  five inherited POSIX launcher-fixture failures on Windows already covered by
+  the WP1 portability boundary; no WP4 CLI assertion failed.
+- Production port 8137 and `C:\Users\pbirc\.codor` were not modified or
+  restarted.
 
 ### WP5 - Assignment dispatch and guarded autopilot
 

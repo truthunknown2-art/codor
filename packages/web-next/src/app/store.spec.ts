@@ -1,4 +1,4 @@
-import type { Message, Room, ServerFrame } from '@codor/protocol';
+import type { Message, ProjectDocument, Room, ServerFrame } from '@codor/protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
@@ -39,10 +39,28 @@ const message = (roomId: string, id: number): Message => ({
 });
 
 const frame = (value: unknown): ServerFrame => value as ServerFrame;
+const project = (roomId: string, version: number): ProjectDocument => ({
+  room: roomId, title: 'Ship', objective: 'Stay durable', status: 'active',
+  coordinator: '01J00000000000000000000000', guarded_autopilot: false,
+  milestones: [], tasks: [], version,
+  created_ts: '2026-07-18T00:00:00.000Z', updated_ts: '2026-07-18T00:00:00.000Z',
+});
 
 afterEach(resetClientStoreForTest);
 
 describe('room-keyed client state', () => {
+  it('commits project hydration atomically and applies later versions live', () => {
+    const store = useClientStore.getState();
+    store.applyFrame(frame({ type: 'self', room: 'eng', member_id: 'human' }));
+    store.applyFrame(frame({ type: 'room', seq: 0, room: room('eng') }));
+    store.applyFrame(frame({ type: 'project', seq: 0, project: project('eng', 1) }));
+    expect(roomSlice(useClientStore.getState(), 'eng').project).toBeUndefined();
+    store.applyFrame(frame({ type: 'sync_complete', room: 'eng', seq: 1 }));
+    expect(roomSlice(useClientStore.getState(), 'eng').project?.version).toBe(1);
+    store.applyFrame(frame({ type: 'project', seq: 2, project: project('eng', 2) }));
+    expect(roomSlice(useClientStore.getState(), 'eng').project?.version).toBe(2);
+  });
+
   // harn:assume member-context-reset-is-authorized-atomic-and-lazy ref=clear-context-client-error-correlation
   it('counts action errors by ref without changing the human-visible error list', () => {
     const store = useClientStore.getState();

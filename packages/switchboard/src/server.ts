@@ -1846,6 +1846,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             else if (act.act === 'pin_message') daemon.pinMessage(frame.room, act.message_id, act.pinned, actor.id);
             else if (act.act === 'delete_message') daemon.deleteMessage(frame.room, act.message_id, actor.id);
             else if (act.act === 'retry_run') daemon.retryRun(frame.room, act.message_id, actor.id);
+            else if (act.act === 'project_mutate') daemon.mutateProject(frame.room, actor.id, act.mutation);
           }
         } catch (error) {
           send({ type: 'error', message: String(error), ref: frame.type });

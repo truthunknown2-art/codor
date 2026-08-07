@@ -4,6 +4,7 @@ import {
   type Member,
   type MemberState,
   type Message,
+  type ProjectDocument,
   type Role,
   type Room,
   type RoomMeter,
@@ -33,6 +34,7 @@ export interface RoomSlice {
   meter: RoomMeter | undefined;
   runEvents: Record<number, RunEventBuffer>;
   support: RoomSupport | undefined;
+  project: ProjectDocument | undefined;
   historyCursor: number | undefined;
   errors: string[];
   // harn:assume member-context-reset-is-authorized-atomic-and-lazy ref=clear-context-client-error-correlation
@@ -79,6 +81,7 @@ const EMPTY_ROOM: RoomSlice = {
   meter: undefined,
   runEvents: emptyRunEvents,
   support: undefined,
+  project: undefined,
   historyCursor: undefined,
   errors: emptyErrors,
   errorRefs: emptyErrorRefs,
@@ -96,6 +99,7 @@ const freshRoom = (room?: Room): RoomSlice => ({
   meter: undefined,
   runEvents: {},
   support: undefined,
+  project: undefined,
   historyCursor: undefined,
   errors: [],
   errorRefs: {},
@@ -109,6 +113,7 @@ interface HydrationStaging {
   inbox: Record<string, Delivery>;
   meter?: RoomMeter;
   support?: RoomSupport;
+  project?: ProjectDocument;
 }
 
 const freshStaging = (): HydrationStaging => ({ members: {}, messages: {}, inbox: {} });
@@ -133,6 +138,8 @@ function frameRoom(frame: ServerFrame, fallback?: string): string | undefined {
       return frame.support.room;
     case 'run_event':
       return frame.room;
+    case 'project':
+      return frame.project.room;
     default:
       return fallback;
   }
@@ -222,6 +229,9 @@ export function createClientStore(): ClientStore {
         case 'room_support':
           stage.support = frame.support;
           return;
+        case 'project':
+          stage.project = frame.project;
+          return;
         default:
           break;
       }
@@ -267,6 +277,7 @@ export function createClientStore(): ClientStore {
             inbox,
             meter: current.meter ?? hydrated.meter,
             support: current.support ?? hydrated.support,
+            project: current.project ?? hydrated.project,
             historyCursor: frame.history_floor
               ?? Object.values(messages).sort((a, b) => a.id - b.id)[0]?.id,
           };
@@ -319,6 +330,9 @@ export function createClientStore(): ClientStore {
           // would recover it). Support is authoritative content; the cursor must
           // still reflect only actually-delivered ordered frames.
           next = { ...current, support: frame.support };
+          break;
+        case 'project':
+          next = { ...current, seq: bump, project: frame.project };
           break;
         case 'run_event':
           // Background rooms need summary changes, not partial evidence buffers.

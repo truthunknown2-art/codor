@@ -49,6 +49,12 @@ const actSamples = {
   wait_end: { act: 'wait_end' },
   configure: { act: 'configure', member_id: '01J00000000000000000000000' },
   set_role: { act: 'set_role', member_id: '01J00000000000000000000000', role: 'member' },
+  project_mutate: {
+    act: 'project_mutate',
+    mutation: {
+      op: 'set_status', expected_version: 1, status: 'active',
+    },
+  },
 } satisfies { [K in Act['act']]: Extract<Act, { act: K }> };
 
 // harn:assume roles-gate-human-acts-not-agents ref=role-matrix-integration
@@ -119,11 +125,12 @@ describe('agent member credential capability matrix', () => {
       'wait_begin',
       'wait_end',
       'member_status',
+      'project_mutate',
     ]));
   });
 
   it('excludes configure and every existing management act', () => {
-    const allowedActs = new Set(['consume_delivery', 'wait_begin', 'wait_end']);
+    const allowedActs = new Set(['consume_delivery', 'wait_begin', 'wait_end', 'project_mutate']);
     for (const act of Object.keys(actSamples)) {
       const allowed = allowedActs.has(act);
       expect(agentAllows(act as RoomCapability), act).toBe(allowed);

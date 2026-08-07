@@ -49,6 +49,7 @@ export const CAPABILITY_MINIMUM_ROLE: Record<HumanCapability, Role> = {
   // Retrying a failed/interrupted run re-delivers its instructions (P9);
   // owner/admin only, agents refused (AGENT_CAPABILITIES omits it).
   retry_run: 'admin',
+  project_mutate: 'member',
   // Compacting an agent's engine session spends the operator's context on their
   // behalf; owner/admin only, and AGENT_CAPABILITIES omits it so an agent can
   // never compact itself or a peer.
@@ -106,6 +107,7 @@ export const AGENT_CAPABILITIES = [
   'wait_begin',
   'wait_end',
   'member_status',
+  'project_mutate',
 ] as const;
 
 export type AgentCapability = (typeof AGENT_CAPABILITIES)[number];
