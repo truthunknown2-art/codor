@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { AgentLimit, HarnessAdapter, Message, ServerFrame, Session, SpawnOpts, WireEvent } from '@codor/protocol';
+import { deriveAgentAccent } from '@codor/protocol';
 import { createTurnTranslator as createCodexTurnTranslator } from '@codor/adapter-codex';
 import { AcpAdapter } from '@codor/adapter-acp';
 import { createTurnTranslator, wireEventFromHook } from '@codor/adapter-claude-code';
@@ -180,6 +181,45 @@ describe('guarded project delivery automation', () => {
     });
     return { planner, coder, reviewer, project };
   }
+
+  it('serializes write tasks per working directory while read-only work remains concurrent', async () => {
+    const shared = testCwd('shared-writes');
+    const planner = spawnAgent('planner-lock', shared);
+    const first = spawnAgent('coder-one', shared);
+    const second = spawnAgent('coder-two', shared);
+    const reviewer = spawnAgent('reviewer-lock');
+    for (const member of [planner, first, second, reviewer]) daemon.pauseMember('eng', member.id);
+    let project = daemon.mutateProject('eng', planner.id, {
+      op: 'init', expected_version: 0, title: 'Locks', objective: 'Prevent concurrent writes',
+      coordinator: planner.id, guarded_autopilot: true,
+    });
+    project = daemon.mutateProject('eng', planner.id, {
+      op: 'add_milestone', expected_version: project.version, id: 'm1', title: 'Build',
+    });
+    for (const [id, assignee, mode] of [
+      ['write-one', first.id, 'write'],
+      ['write-two', second.id, 'write'],
+      ['review-only', planner.id, 'read_only'],
+    ] as const) {
+      project = daemon.mutateProject('eng', planner.id, {
+        op: 'add_task', expected_version: project.version, id, milestone_id: 'm1',
+        title: id, description: id, acceptance_criteria: ['done'], dependencies: [], assignee,
+        gatekeepers: mode === 'write' ? [reviewer.id] : [], workspace_mode: mode,
+      });
+    }
+    project = daemon.mutateProject('eng', planner.id, {
+      op: 'set_status', expected_version: project.version, status: 'active',
+    });
+    expect(project.tasks.find((task) => task.id === 'write-one')?.dispatches?.work).toHaveLength(1);
+    expect(project.tasks.find((task) => task.id === 'write-two')?.dispatches?.work).toBeUndefined();
+    expect(project.tasks.find((task) => task.id === 'review-only')?.dispatches?.work).toHaveLength(1);
+
+    fake.enqueue({ kind: 'complete', final_text: 'first write complete' });
+    daemon.unpauseMember('eng', first.id);
+    await daemon.settle();
+    expect(daemon.store.getProject('eng')?.tasks.find((task) => task.id === 'write-two')?.dispatches?.work)
+      .toHaveLength(1);
+  });
 
   it('dispatches once, returns an unmentioned result, and preserves the link across restart', async () => {
     const { planner, reviewer } = createProject();
@@ -4133,6 +4173,7 @@ describe('a channel-seeded agent gets the permission the operator chose', () => 
     });
     const seeded = daemon.store.listMembers('ops').find((member) => member.handle === 'codor')!;
     expect(seeded.policy).toBe('full-access');
+    expect(seeded.accent).toBe(deriveAgentAccent(seeded.handle));
   });
 
   it('still seeds an agent that was given no policy, and says so honestly', () => {
@@ -6105,6 +6146,34 @@ describe('git working state (diff explorer)', () => {
     return repo;
   };
 
+  it('accepts commit evidence only when it resolves in a known room checkout', () => {
+    const repo = initRepo('evidence');
+    daemon.configureRoom('eng', { cwd: repo });
+    const planner = spawnAgent('git-planner', repo);
+    const coder = spawnAgent('git-coder', repo);
+    const reviewer = spawnAgent('git-reviewer', repo);
+    let project = daemon.mutateProject('eng', planner.id, {
+      op: 'init', expected_version: 0, title: 'Evidence', objective: 'Verify Git proof',
+      coordinator: planner.id, guarded_autopilot: false,
+    });
+    project = daemon.mutateProject('eng', planner.id, {
+      op: 'add_milestone', expected_version: project.version, id: 'm1', title: 'Build',
+    });
+    project = daemon.mutateProject('eng', planner.id, {
+      op: 'add_task', expected_version: project.version, id: 't1', milestone_id: 'm1',
+      title: 'Code', description: 'Commit it', acceptance_criteria: ['commit resolves'], dependencies: [],
+      assignee: coder.id, gatekeepers: [reviewer.id], workspace_mode: 'write',
+    });
+    expect(() => daemon.mutateProject('eng', coder.id, {
+      op: 'submit', expected_version: project.version, task_id: 't1',
+      evidence: [{ type: 'commit', sha: 'f'.repeat(40) }],
+    })).toThrow('does not resolve in a known room working directory');
+    const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo }).toString().trim();
+    expect(daemon.mutateProject('eng', coder.id, {
+      op: 'submit', expected_version: project.version, task_id: 't1', evidence: [{ type: 'commit', sha }],
+    }).tasks[0]?.evidence).toContainEqual({ type: 'commit', sha });
+  });
+
   it('reports modified, untracked, and deleted files with statuses and counts', async () => {
     const repo = initRepo();
     daemon.configureRoom('eng', { cwd: repo });
@@ -6114,6 +6183,17 @@ describe('git working state (diff explorer)', () => {
 
     const state = await daemon.gitWorkingState('eng');
     expect(state.clean).toBe(false);
+    expect(state).toMatchObject({
+      repository: true,
+      repository_root: resolve(repo),
+      worktree: resolve(repo),
+      branch: expect.any(String),
+      head_sha: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo }).toString().trim(),
+      upstream: null,
+      ahead: 0,
+      behind: 0,
+      dirty: true,
+    });
     expect(state.selected).toBe(resolve(repo));
     const byPath = new Map(state.files.map((file) => [file.path, file]));
 
@@ -6130,7 +6210,25 @@ describe('git working state (diff explorer)', () => {
     daemon.configureRoom('eng', { cwd: initRepo() });
     const state = await daemon.gitWorkingState('eng');
     expect(state.clean).toBe(true);
+    expect(state.repository).toBe(true);
     expect(state.files).toEqual([]);
+  });
+
+  it('reports the configured upstream and ahead count without mutating Git', async () => {
+    const repo = initRepo('tracked');
+    const remote = join(dir, 'remote.git');
+    mkdirSync(remote, { recursive: true });
+    git(remote, ['init', '-q', '--bare']);
+    git(repo, ['remote', 'add', 'origin', remote]);
+    git(repo, ['push', '-q', '-u', 'origin', 'HEAD']);
+    writeFileSync(join(repo, 'ahead.txt'), 'local commit\n');
+    git(repo, ['add', '.']);
+    git(repo, ['commit', '-q', '-m', 'ahead']);
+    daemon.configureRoom('eng', { cwd: repo });
+
+    expect(await daemon.gitWorkingState('eng')).toMatchObject({
+      upstream: expect.stringMatching(/^origin\//), ahead: 1, behind: 0, dirty: false,
+    });
   });
 
   it('returns a clean, empty state for a non-git directory', async () => {
@@ -6139,6 +6237,7 @@ describe('git working state (diff explorer)', () => {
     daemon.configureRoom('eng', { cwd: plain });
     const state = await daemon.gitWorkingState('eng');
     expect(state.clean).toBe(true);
+    expect(state.repository).toBe(false);
     expect(state.files).toEqual([]);
   });
 

@@ -45,12 +45,14 @@ test.describe('multiplexed room state', () => {
     });
     const research = page.getByTestId('room-link-research');
     await expect(research).toContainText('streamed retrieval update');
+    await expect(research.locator('.nx-agent-mention')).toHaveClass(/is-(?:indigo|green|violet|amber|rose|cyan|user)/);
     await expect(research.locator('.nx-unread')).toHaveText('2');
     expect(summaryRequests).toHaveLength(1);
 
     await research.click();
     await expect(page.locator('.nx-chat-title h1')).toHaveText('Research');
     await expect(page.getByTestId('room-working-eng')).toContainText('@scout is working');
+    await expect(page.getByTestId('room-working-eng')).toHaveClass(/is-(?:indigo|green|violet|amber|rose|cyan)/);
     await expect(page.getByTestId(`msg-${arrival.id}`)).toContainText('streamed retrieval update');
     await expect(research.locator('.nx-unread')).toHaveCount(0);
     expect(sockets).toHaveLength(1);
@@ -67,6 +69,9 @@ test.describe('multiplexed room state', () => {
     await page.waitForTimeout(250);
     expect(engJournals).toHaveLength(engReadsBeforeReturn);
     await expect(page.getByTestId('room-working-eng')).toContainText('@scout is working');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.locator('.nx-mobile-sub')).toContainText('@scout is working');
+    await expect(page.locator('.nx-mobile-sub')).toHaveClass(/is-(?:indigo|green|violet|amber|rose|cyan)/);
   });
 
   test('read state advances only after a substantive row stays visibly onscreen', async ({ page }) => {

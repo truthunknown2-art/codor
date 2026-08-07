@@ -30,6 +30,14 @@ export type BillingMode = z.infer<typeof BillingModeSchema>;
 export const MemberAccentSchema = z.string().trim().min(1).max(64);
 export type MemberAccent = z.infer<typeof MemberAccentSchema>;
 
+export const AGENT_ACCENTS = ['indigo', 'green', 'violet', 'amber', 'rose', 'cyan'] as const;
+
+export function deriveAgentAccent(handle: string): typeof AGENT_ACCENTS[number] {
+  let hash = 0;
+  for (const ch of handle) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  return AGENT_ACCENTS[hash % AGENT_ACCENTS.length] ?? 'indigo';
+}
+
 export const MemberFailureSchema = z.object({
   code: z.enum([
     'operator_killed',

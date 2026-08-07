@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, constants as fsConstants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -48,6 +48,7 @@ import {
   MemberStatusResponseSchema,
   ProducedArtifactSchema,
   ProducedArtifactErrorSchema,
+  deriveAgentAccent,
   deriveRoomId,
   parseRunItemPayload,
 } from '@codor/protocol';
@@ -180,6 +181,15 @@ export interface RoomGitFile {
 export interface RoomGitWorkingState {
   cwds: string[];
   selected: string | null;
+  repository: boolean;
+  repository_root: string | null;
+  worktree: string | null;
+  branch: string | null;
+  head_sha: string | null;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  dirty: boolean;
   clean: boolean;
   files: RoomGitFile[];
 }
@@ -1677,7 +1687,7 @@ export class Daemon {
       handle: opts.handle,
       display_name: opts.display_name ?? opts.handle,
       purpose: opts.purpose,
-      accent: opts.accent,
+      accent: opts.accent ?? deriveAgentAccent(opts.handle),
       billing_mode: opts.billing_mode,
       harness: opts.harness,
       cwd,
@@ -5630,6 +5640,7 @@ export class Daemon {
       current,
       member: (id) => this.store.getMember(project.room, id),
       messageExists: (id) => this.store.getMessage(project.room, id) !== undefined,
+      commitExists: () => true,
     }, current, tasks);
   }
 
@@ -6051,6 +6062,30 @@ export class Daemon {
     };
   }
 
+  private projectTaskWorkingDirectory(project: ProjectDocument, task: ProjectDocument['tasks'][number]): string | undefined {
+    const raw = task.assignee === undefined
+      ? this.store.getRoom(project.room)?.config.cwd
+      : this.store.getMember(project.room, task.assignee)?.cwd ?? this.store.getRoom(project.room)?.config.cwd;
+    if (raw === undefined) return undefined;
+    try {
+      const normalized = normalizeWorkingDirectory(raw, this.homeDir);
+      return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private projectWriteTaskIsLocked(project: ProjectDocument, candidate: ProjectDocument['tasks'][number]): boolean {
+    if (candidate.workspace_mode !== 'write') return false;
+    const cwd = this.projectTaskWorkingDirectory(project, candidate);
+    if (cwd === undefined) return false;
+    return project.tasks.some((task) => task.id !== candidate.id
+      && task.workspace_mode === 'write'
+      && this.projectTaskWorkingDirectory(project, task) === cwd
+      && task.dispatches?.work.some((dispatch) =>
+        dispatch.revision === task.revision && dispatch.result_message_id === undefined) === true);
+  }
+
   private reconcileProjectAutomation(room: string): void {
     for (let pass = 0; pass < 1_000; pass += 1) {
       const project = this.store.getProject(room);
@@ -6059,6 +6094,7 @@ export class Daemon {
       const ready = project.tasks.find((task) =>
         task.status === 'ready' &&
         task.assignee !== undefined &&
+        !this.projectWriteTaskIsLocked(project, task) &&
         !task.dispatches?.work.some((dispatch) => dispatch.revision === task.revision));
       if (ready) {
         this.dispatchReadyProjectTask(project, ready.id);
@@ -6161,6 +6197,7 @@ export class Daemon {
       current: this.store.getProject(room),
       member: (id) => this.store.getMember(room, id),
       messageExists: (id) => this.store.getMessage(room, id) !== undefined,
+      commitExists: (sha) => this.projectCommitExists(room, sha),
     }, mutation);
     const saved = this.store.saveProject(input, mutation.expected_version);
     this.reconcileProjectAutomation(room);
@@ -6184,9 +6221,40 @@ export class Daemon {
    */
   async gitWorkingState(room: string, requestedCwd?: string): Promise<RoomGitWorkingState> {
     const { cwds, selected } = this.resolveRoomGitCwd(room, requestedCwd);
-    if (selected === null) return { cwds, selected, clean: true, files: [] };
+    const empty = {
+      cwds, selected, repository: false, repository_root: null, worktree: null,
+      branch: null, head_sha: null, upstream: null, ahead: 0, behind: 0,
+      dirty: false, clean: true, files: [],
+    } satisfies RoomGitWorkingState;
+    if (selected === null || !await this.isGitRepository(selected)) return empty;
+    const optional = async (args: string[]): Promise<string | null> => {
+      try { return (await runGitRead(selected, args)).trim() || null; } catch { return null; }
+    };
     const files = await this.readGitWorkingFiles(selected);
-    return { cwds, selected, clean: files.length === 0, files };
+    const [worktree, commonDir, branch, headSha, upstream] = await Promise.all([
+      optional(['rev-parse', '--show-toplevel']),
+      optional(['rev-parse', '--path-format=absolute', '--git-common-dir']),
+      optional(['branch', '--show-current']),
+      optional(['rev-parse', '--verify', 'HEAD']),
+      optional(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']),
+    ]);
+    const divergence = upstream === null ? null : await optional(['rev-list', '--left-right', '--count', 'HEAD...@{upstream}']);
+    const [ahead = 0, behind = 0] = divergence?.split(/\s+/).map(Number) ?? [];
+    return {
+      cwds,
+      selected,
+      repository: true,
+      repository_root: commonDir === null ? worktree : resolve(dirname(commonDir)),
+      worktree: worktree === null ? null : resolve(worktree),
+      branch,
+      head_sha: headSha,
+      upstream,
+      ahead,
+      behind,
+      dirty: files.length > 0,
+      clean: files.length === 0,
+      files,
+    };
   }
 
   /** A bounded newest-first union of commits reachable from local branches or
@@ -6307,6 +6375,21 @@ export class Daemon {
     } catch {
       return false;
     }
+  }
+
+  private projectCommitExists(room: string, sha: string): boolean {
+    return this.roomKnownCwds(room).some((cwd) => {
+      try {
+        execFileSync('git', ['-C', cwd, 'cat-file', '-e', `${sha}^{commit}`], {
+          timeout: GIT_TIMEOUT_MS,
+          windowsHide: true,
+          stdio: 'ignore',
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    });
   }
 
   /** The room's known directories: distinct existing cwds of its agent members

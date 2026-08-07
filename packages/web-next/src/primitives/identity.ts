@@ -1,19 +1,15 @@
-import type { Member } from '@codor/protocol';
+import { AGENT_ACCENTS, deriveAgentAccent, type Member } from '@codor/protocol';
 
-/** The spec's identity tints: agents cycle indigo/green/violet by handle so each agent
+/** Agent identity tints cycle by handle so each agent
  *  keeps one colour everywhere; humans get the inverse deep-green "user" chip. */
-export type AccentName = 'indigo' | 'green' | 'violet' | 'user';
-
-const AGENT_ORDER: AccentName[] = ['indigo', 'green', 'violet'];
+export type AccentName = typeof AGENT_ACCENTS[number] | 'user';
 
 export function memberAccent(member: Pick<Member, 'kind' | 'handle' | 'accent'>): AccentName {
   if (member.kind === 'human') return 'user';
-  if (member.accent === 'indigo' || member.accent === 'green' || member.accent === 'violet') {
-    return member.accent;
+  if (AGENT_ACCENTS.includes(member.accent as typeof AGENT_ACCENTS[number])) {
+    return member.accent as AccentName;
   }
-  let hash = 0;
-  for (const ch of member.handle) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
-  return AGENT_ORDER[hash % AGENT_ORDER.length] ?? 'indigo';
+  return deriveAgentAccent(member.handle);
 }
 
 /** Two-letter initials for the squircle chip: '@code-reviewer' -> 'cr', 'Richard' -> 'Ri'. */

@@ -1,4 +1,4 @@
-import { CHANNEL_ACCENTS, deriveRoomColor } from '@codor/protocol';
+import { CHANNEL_ACCENTS, deriveAgentAccent, deriveRoomColor } from '@codor/protocol';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -591,6 +591,7 @@ describe('durable project and team state', () => {
 
   it('migrates existing members to honest presentation defaults', () => {
     const { owner } = openRoom(store);
+    const agent = store.addMember('eng', { kind: 'agent', handle: 'legacy-agent', display_name: 'Legacy agent' });
     store.close();
     const db = new Database(join(dir, 'test.sqlite'));
     db.exec('ALTER TABLE members DROP COLUMN accent; ALTER TABLE members DROP COLUMN billing_mode;');
@@ -599,6 +600,7 @@ describe('durable project and team state', () => {
     store = new Store(join(dir, 'test.sqlite'));
     expect(store.getMember('eng', owner.id)).toMatchObject({ billing_mode: 'unknown' });
     expect(store.getMember('eng', owner.id)?.accent).toBeUndefined();
+    expect(store.getMember('eng', agent.id)?.accent).toBe(deriveAgentAccent(agent.handle));
   });
 });
 

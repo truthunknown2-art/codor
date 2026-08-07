@@ -1,6 +1,6 @@
 # Milestone 1: Production team workflow
 
-Status: approved; Work Packages 1-4 complete; Work Package 5 implementation and local verification complete
+Status: approved; Work Packages 1-6 complete; Work Package 7 implementation and local verification complete
 Upstream baseline: `rjx18/codor@3b587c75cc02a9580ffbdaaafc217fc4d12d8cf5`
 Fork: `truthunknown2-art/codor`
 Production boundary: port `8137` and `C:\Users\pbirc\.codor` must remain untouched until final acceptance.
@@ -319,6 +319,42 @@ and concurrent-writer exclusion.
 
 Completion: agent colours match everywhere, subscription estimates are never
 called exact, and board evidence names verified Git state.
+
+WP7 result (2026-08-07): implementation and local verification complete.
+Members now use one persisted accent across avatars, author names, known chat
+mentions, working indicators, channel previews, mobile status, and board
+assignments. The accessible palette expands to six agent colours; every text
+accent clears WCAG AA contrast against its light and dark chat surface.
+
+Cost labels now separate provider-reported values from advisory estimates.
+Subscription members explicitly show a zero Codor charge and only an advisory
+API-equivalent value; the existing immutable historical estimates and
+provider-reported-only spend brakes are unchanged. Git working state now shows
+repository root, worktree, branch, HEAD, upstream, ahead/behind, and dirty state.
+Commit evidence is accepted only when the object resolves as a commit in one of
+the room's recorded working directories. Guarded board dispatch reserves a
+normalized working directory for one write task at a time while read-only work
+continues concurrently.
+
+Verification evidence:
+
+- Switchboard and Web TypeScript checks passed; the Web production bundle
+  completed successfully.
+- Focused identity, cost, mention, Git client, and project mutation suites passed
+  33/33 tests. Focused automation and Git daemon coverage passed 19/19 tests,
+  including real commit-object resolution and writer serialization.
+- The complete store suite passed 86/86 tests, including restart-safe accent
+  backfill for existing agents.
+- The focused desktop/mobile channel-state browser flow passed 1/1, covering
+  coloured channel previews, working status, and the responsive mobile header.
+- The three browser suites affected by the new cost and mention markup passed
+  18/18 tests after their acceptance assertions were updated.
+- The six light and six dark text accents measured between 5.02:1 and 12.06:1
+  against their chat surfaces.
+- The broad local Switchboard run retained only the inherited Windows
+  artifact-snapshot exceptions documented under WP1. The binding Ubuntu CI gate
+  remains required before merge.
+- Production port 8137 and `C:\Users\pbirc\.codor` were not modified or restarted.
 
 ### WP8 - Safe updater, integration acceptance, and cutover
 

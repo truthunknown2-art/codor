@@ -735,7 +735,7 @@ function TurnBlock(props: {
               {isMobile && (
                 <Chip name={handle} accent={author ? memberAccent(author) : 'indigo'} size={24} />
               )}
-              <strong className="nx-turn-author">@{handle}</strong>
+              <strong className={`nx-turn-author is-${author ? memberAccent(author) : 'indigo'}`}>@{handle}</strong>
               <time className="nx-turn-time" dateTime={message.ts}>{clockTime(message.ts)}</time>
               <span className="nx-turn-spacer" />
               <a className="nx-permalink" href={`#${message.id}`}>#{message.id}</a>
@@ -772,7 +772,7 @@ function TurnBlock(props: {
             {isMobile && (
               <Chip name={handle} accent={author ? memberAccent(author) : 'indigo'} size={24} />
             )}
-            <strong className="nx-turn-author">@{handle}</strong>
+            <strong className={`nx-turn-author is-${author ? memberAccent(author) : 'indigo'}`}>@{handle}</strong>
             {message.origin !== undefined && (
               <span className="nx-turn-origin" title={`via ${message.origin.platform}`}>
                 {message.origin.sender_name} · {message.origin.platform}
@@ -829,12 +829,12 @@ function TurnBlock(props: {
           </div>
         )}
         {message.kind === 'run'
-          ? <RunContent message={message} room={props.room} token={props.token} />
+          ? <RunContent message={message} room={props.room} token={props.token} members={Object.values(props.members)} />
           : message.kind === 'ask' || message.kind === 'approval'
-            ? <AskCardView message={message} connection={props.connection} />
+            ? <AskCardView message={message} connection={props.connection} members={Object.values(props.members)} />
             : message.voice !== undefined
-              ? <VoiceCard voice={message.voice} messageId={message.id} body={message.body} highlightHandle={mentionsMe ? props.viewerHandle : undefined} />
-              : <MessageProse body={message.body} highlightHandle={mentionsMe ? props.viewerHandle : undefined} />}
+              ? <VoiceCard voice={message.voice} messageId={message.id} body={message.body} members={Object.values(props.members)} highlightHandle={mentionsMe ? props.viewerHandle : undefined} />
+              : <MessageProse body={message.body} members={Object.values(props.members)} highlightHandle={mentionsMe ? props.viewerHandle : undefined} />}
         {message.attachments !== undefined && message.attachments.length > 0 && (
           <MessageAttachments room={props.room} token={props.token} attachments={message.attachments} />
         )}
@@ -1017,25 +1017,30 @@ function SeenTicks(props: {
 }
 // harn:end agent-delivery-lifecycle-streams-v2
 
-/** Bold a mention of the viewer's own handle in already-sanitized markdown HTML.
- *  Only @handle preceded by a non-word/non-path char is wrapped (skips emails). */
-function boldSelfMention(html: string, handle: string): string {
-  const escaped = handle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return html.replace(
-    new RegExp(`(^|[^\\w@/])@(${escaped})\\b`, 'gi'),
-    '$1<strong class="nx-mention-self">@$2</strong>',
-  );
+/** Colour known member mentions in already-sanitized markdown HTML. */
+export function colorKnownMentions(html: string, members: Member[], highlightHandle?: string): string {
+  const byHandle = new Map(members.map((member) => [member.handle.toLowerCase(), member]));
+  const handles = [...byHandle.keys()].sort((left, right) => right.length - left.length);
+  if (handles.length === 0) return html;
+  const pattern = handles.map((handle) => handle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  const mention = new RegExp(`(^|[^\\w@/])@(${pattern})\\b`, 'gi');
+  return html.split(/(<[^>]+>)/g).map((part) => part.startsWith('<') ? part : part.replace(
+    mention,
+    (_match, prefix: string, handle: string) => {
+      const member = byHandle.get(handle.toLowerCase())!;
+      const self = highlightHandle?.toLowerCase() === handle.toLowerCase() ? ' is-self' : '';
+      return `${prefix}<strong class="nx-agent-mention is-${memberAccent(member)}${self}">@${handle}</strong>`;
+    },
+  )).join('');
 }
 
-function MessageProse(props: { body: string; highlightHandle?: string }) {
+function MessageProse(props: { body: string; members?: Member[]; highlightHandle?: string }) {
   // renderMarkdown sanitizes: only markdown-produced structure reaches the DOM.
   // The self-mention <strong> we add afterwards is our own safe markup.
   const html = useMemo(() => {
     const rendered = renderMarkdown(props.body);
-    return props.highlightHandle === undefined
-      ? rendered
-      : boldSelfMention(rendered, props.highlightHandle);
-  }, [props.body, props.highlightHandle]);
+    return props.members === undefined ? rendered : colorKnownMentions(rendered, props.members, props.highlightHandle);
+  }, [props.body, props.highlightHandle, props.members]);
   return <div className="nx-prose" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
@@ -1045,6 +1050,7 @@ function VoiceCard(props: {
   voice: { duration_seconds: number; levels: number[] };
   messageId: number;
   body: string;
+  members: Member[];
   highlightHandle?: string;
 }) {
   return (
@@ -1054,7 +1060,7 @@ function VoiceCard(props: {
         <MiniWaveform levels={props.voice.levels} className="nx-voice-card-wave" />
         <span className="nx-voice-card-duration">{formatElapsed(Math.round(props.voice.duration_seconds))}</span>
       </div>
-      <MessageProse body={props.body} highlightHandle={props.highlightHandle} />
+      <MessageProse body={props.body} members={props.members} highlightHandle={props.highlightHandle} />
     </div>
   );
 }
@@ -1237,7 +1243,7 @@ function runFamilyOwners(
   return { newestId, terminalOwnerId: journalOwner ?? newestId };
 }
 
-function RunContent(props: { message: Message; room: string; token: () => string }) {
+function RunContent(props: { message: Message; room: string; token: () => string; members: Member[] }) {
   const rootId = props.message.run_parent_id ?? props.message.id;
   const root = useClientStore((state) => {
     const slice = roomSlice(state, props.room);
@@ -1373,15 +1379,16 @@ function RunContent(props: { message: Message; room: string; token: () => string
                 messageId={props.message.id}
                 blockId={segment.row.eventIndex}
                 text={segment.row.text ?? ''}
+                members={props.members}
               />
             )
           : <ToolBatch key={`tools-${segment.rows[0]?.eventIndex ?? index}`} rows={segment.rows} diffs={storedDiffs} />,
       )}
       {!running && !hasProse && finalText.length > 0 && (
-        <RunTextBlock messageId={props.message.id} blockId="final" text={finalText} />
+        <RunTextBlock messageId={props.message.id} blockId="final" text={finalText} members={props.members} />
       )}
       {!running && trailingText.length > 0 && (
-        <RunTextBlock messageId={props.message.id} blockId="final" text={trailingText} />
+        <RunTextBlock messageId={props.message.id} blockId="final" text={trailingText} members={props.members} />
       )}
       {/* harn:assume run-failure-evidence-is-surfaced ref=web-next-run-error-evidence */}
       {!running && runError !== undefined && runError !== '' && (
@@ -1507,6 +1514,7 @@ function renderTimeline(entries: TimelineEntry[], ctx: TimelineCtx): ReactNode[]
           canRetry={ctx.canRetry}
           connection={ctx.connection}
           diffs={storedDiffs}
+          members={Object.values(ctx.members)}
         />,
       );
       prevAuthor = entry.message.author;
@@ -1566,6 +1574,7 @@ function RunStretch(props: {
   canRetry: boolean;
   connection: Connection;
   diffs: RunItemDiff[];
+  members: Member[];
 }) {
   const { message, author } = props;
   const isMobile = useIsMobile();
@@ -1589,7 +1598,7 @@ function RunStretch(props: {
       <div className="nx-turn-main">
         <div className="nx-turn-meta">
           {isMobile && <Chip name={handle} accent={author ? memberAccent(author) : 'indigo'} size={24} />}
-          <strong className="nx-turn-author">@{handle}</strong>
+          <strong className={`nx-turn-author is-${author ? memberAccent(author) : 'indigo'}`}>@{handle}</strong>
           <time className="nx-turn-time" dateTime={message.ts}>{clockTime(message.ts)}</time>
           {props.anchored && message.pinned === true && (
             <Pin size={12} className="nx-pin-glyph" aria-label="Pinned" data-testid={`msg-${message.id}-pinned`} />
@@ -1651,6 +1660,7 @@ function RunStretch(props: {
                       messageId={message.id}
                       blockId={segment.row.eventIndex}
                       text={segment.row.text ?? ''}
+                      members={props.members}
                     />
                   )
                 : <ToolBatch key={`tools-${segment.rows[0]?.eventIndex ?? index}`} rows={segment.rows} diffs={props.diffs} />,
@@ -1674,10 +1684,10 @@ function RunStretch(props: {
   );
 }
 
-function RunTextBlock(props: { messageId: number; blockId: number | 'final'; text: string }) {
+function RunTextBlock(props: { messageId: number; blockId: number | 'final'; text: string; members: Member[] }) {
   return (
     <div className="nx-run-block" data-testid={`run-${props.messageId}-block-${props.blockId}`}>
-      <MessageProse body={props.text} />
+      <MessageProse body={props.text} members={props.members} />
       <span className="nx-run-block-actions">
         <CopyButton
           text={props.text}
@@ -1850,13 +1860,13 @@ function ToolRow(props: { row: RunRow; diffs: RunItemDiff[] }) {
 // ── Interaction cards: options answer durably; the resolved card leaves the
 // timeline once the server marks its delivery resolved. ─────────────────────
 
-function AskCardView(props: { message: Message; connection: Connection }) {
+function AskCardView(props: { message: Message; connection: Connection; members: Member[] }) {
   const ask = props.message.ask;
   const [picked, setPicked] = useState<string[]>([]);
   // Per-question selections for a multi-question AskUserQuestion, keyed by index.
   const [picks, setPicks] = useState<Record<number, string[]>>({});
   const [sent, setSent] = useState(false);
-  if (!ask) return <MessageProse body={props.message.body} />;
+  if (!ask) return <MessageProse body={props.message.body} members={props.members} />;
 
   const answer = (value: unknown): void => {
     props.connection.act({

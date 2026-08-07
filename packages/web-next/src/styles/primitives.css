@@ -15,6 +15,9 @@
 .nx-chip.is-indigo { background: var(--chip-indigo-bg); color: var(--chip-indigo-ink); }
 .nx-chip.is-green { background: var(--chip-green-bg); color: var(--chip-green-ink); }
 .nx-chip.is-violet { background: var(--chip-violet-bg); color: var(--chip-violet-ink); }
+.nx-chip.is-amber { background: var(--chip-amber-bg); color: var(--chip-amber-ink); }
+.nx-chip.is-rose { background: var(--chip-rose-bg); color: var(--chip-rose-ink); }
+.nx-chip.is-cyan { background: var(--chip-cyan-bg); color: var(--chip-cyan-ink); }
 .nx-chip.is-user { background: var(--chip-user-bg); color: var(--chip-user-ink); }
 
 .nx-presence {
@@ -155,7 +158,7 @@
   width: 5px;
   height: 5px;
   border-radius: var(--r-full);
-  background: var(--c-faded);
+  background: currentColor;
   animation: nx-dot 1.2s var(--m-ease) infinite;
 }
 .nx-typing > span:nth-child(2) { animation-delay: 0.15s; }

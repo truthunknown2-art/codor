@@ -24,6 +24,7 @@ function mutate(
   const input = applyProjectMutation({
     room: 'eng', actor: members[actor]!, current,
     member: (id) => members[id], messageExists: (id) => id === 7,
+    commitExists: (sha) => sha === 'a'.repeat(40),
   }, mutation);
   return { ...input, version: (current?.version ?? 0) + 1, created_ts: TS, updated_ts: TS };
 }
@@ -36,6 +37,22 @@ function initialized(): ProjectDocument {
 }
 
 describe('canonical project mutations', () => {
+  it('accepts only commit evidence resolved by the room', () => {
+    let project = initialized();
+    project = mutate(project, PLANNER, { op: 'add_milestone', expected_version: 1, id: 'm1', title: 'Build' });
+    project = mutate(project, PLANNER, {
+      op: 'add_task', expected_version: 2, id: 't1', milestone_id: 'm1', title: 'Code', description: 'Implement',
+      acceptance_criteria: ['Pass'], dependencies: [], assignee: CODER,
+      gatekeepers: [REVIEWER], workspace_mode: 'write',
+    });
+    expect(() => mutate(project, CODER, {
+      op: 'submit', expected_version: 3, task_id: 't1', evidence: [{ type: 'commit', sha: 'b'.repeat(40) }],
+    })).toThrow('does not resolve in a known room working directory');
+    expect(mutate(project, CODER, {
+      op: 'submit', expected_version: 3, task_id: 't1', evidence: [{ type: 'commit', sha: 'a'.repeat(40) }],
+    }).tasks[0]?.evidence).toContainEqual({ type: 'commit', sha: 'a'.repeat(40) });
+  });
+
   it('keeps structure coordinator-owned and rejects unsafe write tasks and dependency cycles', () => {
     let project = initialized();
     project = mutate(project, PLANNER, {

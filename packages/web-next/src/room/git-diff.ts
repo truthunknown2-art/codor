@@ -19,6 +19,15 @@ export interface GitFile {
 export interface GitWorkingState {
   cwds: string[];
   selected: string | null;
+  repository: boolean;
+  repository_root: string | null;
+  worktree: string | null;
+  branch: string | null;
+  head_sha: string | null;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  dirty: boolean;
   clean: boolean;
   files: GitFile[];
 }

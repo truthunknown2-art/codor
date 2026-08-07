@@ -152,7 +152,14 @@ function TaskCard(props: {
       <ul>{props.task.acceptance_criteria.map((criterion) => <li key={criterion}>{criterion}</li>)}</ul>
       {props.task.dependencies.length > 0 && <small>Depends on: {props.task.dependencies.join(', ')}</small>}
       {props.task.evidence.length > 0 && (
-        <details><summary>{props.task.evidence.length} evidence item(s)</summary><pre>{JSON.stringify(props.task.evidence, null, 2)}</pre></details>
+        <details><summary>{props.task.evidence.length} evidence item(s)</summary><ul>
+          {props.task.evidence.map((evidence, index) => (
+            <li key={index}>{evidence.type === 'commit'
+              ? <>Verified Git commit at submission: <code>{evidence.sha}</code></>
+              : <code>{JSON.stringify(evidence)}</code>}
+            </li>
+          ))}
+        </ul></details>
       )}
       {props.canCoordinate && props.task.status !== 'done' && (
         <div className="nx-project-inline">

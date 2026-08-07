@@ -19,7 +19,11 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe('git history client', () => {
   it('does not reuse an identical room working tree across computers', () => {
-    const state: GitWorkingState = { cwds: ['/a'], selected: '/a', clean: true, files: [] };
+    const state: GitWorkingState = {
+      cwds: ['/a'], selected: '/a', repository: true, repository_root: '/a', worktree: '/a',
+      branch: 'main', head_sha: 'a'.repeat(40), upstream: null, ahead: 0, behind: 0,
+      dirty: false, clean: true, files: [],
+    };
     setActiveComputer('A');
     rememberGitWorkingState('shared', undefined, state);
     expect(cachedGitWorkingState('shared')).toEqual(state);
