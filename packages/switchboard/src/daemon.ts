@@ -21,6 +21,7 @@ import type {
   HarnessAdapter,
   Member,
   MemberAccent,
+  MemberFailure,
   MemberStatusResponse,
   Message,
   PendingInteraction,
@@ -1734,8 +1735,19 @@ export class Daemon {
       state: this.residency.isReachable(opts.host) ? 'idle' : 'unreachable',
       custody: 'owned',
     });
-    this.emitMember(room, member);
-    return member;
+    const projected = member.state === 'unreachable'
+      ? this.store.updateMember(room, member.id, {
+          failure: {
+            code: 'remote_unreachable',
+            summary: `resident switchboard ${opts.host} is unreachable`,
+            ts: new Date().toISOString(),
+            resume_capability: 'wait',
+            recommended_action: 'wait_for_host',
+          },
+        })
+      : member;
+    this.emitMember(room, projected);
+    return projected;
   }
 
   private isRemoteMember(member: Member): member is Member & { host: string } {
@@ -1758,7 +1770,16 @@ export class Daemon {
         }
         if (!connected) {
           if (member.state !== 'unreachable') {
-            this.emitMember(room.id, this.store.updateMember(room.id, member.id, { state: 'unreachable' }));
+            this.emitMember(room.id, this.store.updateMember(room.id, member.id, {
+              state: 'unreachable',
+              failure: {
+                code: 'remote_unreachable',
+                summary: `resident switchboard ${member.host} is unreachable`,
+                ts: new Date().toISOString(),
+                resume_capability: 'wait',
+                recommended_action: 'wait_for_host',
+              },
+            }));
           }
           continue;
         }
@@ -1768,6 +1789,7 @@ export class Daemon {
         });
         const restored = this.store.updateMember(room.id, member.id, {
           state: queued.length > 0 ? 'queued' : 'idle',
+          failure: undefined,
         });
         this.emitMember(room.id, restored);
         this.track(this.maybeStartTurn(room.id, member.id));
@@ -1798,6 +1820,92 @@ export class Daemon {
     return session;
   }
 
+  private recoveryFor(
+    room: string,
+    member: Member,
+    safeFresh = false,
+  ): Pick<MemberFailure, 'resume_capability' | 'recommended_action'> {
+    if (this.isRemoteMember(member)) {
+      return { resume_capability: 'wait', recommended_action: 'wait_for_host' };
+    }
+    const adapter = member.harness === undefined ? undefined : this.adapters.get(member.harness);
+    const runtime = this.store.getAgentRuntimeConfig(room, member.id);
+    const acpRestore = member.harness === 'acp' && member.session_ref !== undefined &&
+      (runtime?.lifecycle?.resume === true || runtime?.lifecycle?.load === true);
+    const copilotRevive = member.harness === 'copilot-vscode' && member.session_ref !== undefined;
+    if (member.session_ref !== undefined && (adapter?.capabilities.resume === true || acpRestore || copilotRevive)) {
+      return { resume_capability: 'native', recommended_action: 'revive' };
+    }
+    return safeFresh
+      ? { resume_capability: 'fresh', recommended_action: 'restart' }
+      : { resume_capability: 'replace', recommended_action: 'replace_and_continue' };
+  }
+
+  private failMember(
+    room: string,
+    member: Member,
+    failure: Pick<MemberFailure, 'code' | 'summary'> & { run_message_id?: number },
+    safeFresh = false,
+  ): Member {
+    const failed = this.store.updateMember(room, member.id, {
+      state: member.state === 'unreachable' ? 'unreachable' : 'dead',
+      failure: {
+        ...failure,
+        ts: new Date().toISOString(),
+        ...this.recoveryFor(room, member, safeFresh),
+      },
+    });
+    this.emitMember(room, failed);
+    if (failed.state === 'dead') this.blockDeadProjectAssignee(room, failed);
+    return failed;
+  }
+
+  private blockDeadProjectAssignee(
+    room: string,
+    member: Pick<Member, 'id' | 'handle' | 'failure'>,
+  ): void {
+    const project = this.store.getProject(room);
+    if (!project || project.status !== 'active') return;
+    const marker = `[member-failure:${member.id}]`;
+    const affected = project.tasks.filter((task) =>
+      task.assignee === member.id && task.status !== 'done' && !task.evidence.some((evidence) =>
+        evidence.type === 'note' && evidence.text.includes(marker)));
+    if (affected.length === 0 && project.coordinator !== member.id) return;
+    for (const task of affected) {
+      for (const deliveryId of task.dispatches?.work.map((dispatch) => dispatch.delivery_id) ?? []) {
+        const delivery = this.store.getDelivery(room, deliveryId);
+        if (delivery?.state === 'queued') this.store.updateDelivery(room, delivery.id, { state: 'consumed' });
+      }
+    }
+    const tasks = project.tasks.map((task) => affected.some((item) => item.id === task.id)
+      ? {
+          ...task,
+          status: 'blocked' as const,
+          evidence: [...task.evidence, {
+            type: 'note' as const,
+            text: `Assignee @${member.handle} is unavailable: ${member.failure?.summary ?? 'agent failed'} ${marker}`,
+          }],
+        }
+      : task);
+    this.saveProject({
+      room: project.room,
+      title: project.title,
+      objective: project.objective,
+      status: project.status,
+      coordinator: project.coordinator,
+      guarded_autopilot: project.coordinator === member.id ? false : project.guarded_autopilot,
+      ...(project.continuation && { continuation: project.continuation }),
+      milestones: project.milestones,
+      tasks,
+    }, project.version);
+    this.postSystemMessage(
+      room,
+      affected.length > 0
+        ? `@${member.handle} became unavailable; ${affected.map((task) => task.id).join(', ')} blocked with the exact failure. Replace the member to continue.`
+        : `Project coordinator @${member.handle} became unavailable; guarded autopilot paused. Replace the member to continue.`,
+    );
+  }
+
   // harn:assume copilot-vscode-revive-requires-exact-live-cache ref=revive-native-session
   reviveMember(room: string, memberId: string): Member {
     const existing = this.store.getMember(room, memberId);
@@ -1807,8 +1915,16 @@ export class Daemon {
       throw new Error(`member @${existing.handle} has an active interactive attach lease`);
     }
     const adapter = this.requireAdapter(existing.harness!);
+    const runtime = this.store.getAgentRuntimeConfig(room, existing.id);
+    const acpRestore = existing.harness === 'acp' && existing.session_ref !== undefined &&
+      (runtime?.lifecycle?.resume === true || runtime?.lifecycle?.load === true);
     const session = adapter.capabilities.resume
       ? this.attachedSession(existing)
+      : acpRestore
+        ? (() => {
+            this.sessions.delete(memberId);
+            return this.sessionFor(room, existing);
+          })()
       : (() => {
           if (existing.harness !== 'copilot-vscode') {
             throw new Error(`adapter '${adapter.id}' does not support resume`);
@@ -1834,10 +1950,207 @@ export class Daemon {
           return cached;
         })();
     this.sessions.set(memberId, session);
-    const member = this.store.updateMember(room, memberId, { state: 'idle', custody: 'owned' });
+    const member = this.store.updateMember(room, memberId, {
+      state: 'idle', custody: 'owned', failure: undefined,
+    });
     this.emitMember(room, member);
     this.track(this.maybeStartTurn(room, memberId));
     return member;
+  }
+
+  restartMember(room: string, memberId: string): Member {
+    const existing = this.store.getMember(room, memberId);
+    if (!existing || existing.kind !== 'agent' || existing.removed_ts !== undefined) {
+      throw new Error(`no such agent member: ${memberId}`);
+    }
+    if (existing.state !== 'dead') throw new Error(`member @${existing.handle} is not dead`);
+    if (existing.failure?.recommended_action !== 'restart' || existing.failure.restart_attempted === true) {
+      throw new Error(`member @${existing.handle} cannot be safely restarted; replace it instead`);
+    }
+    const attempted = this.store.updateMember(room, memberId, {
+      failure: { ...existing.failure, restart_attempted: true },
+    });
+    this.emitMember(room, attempted);
+    try {
+      const adapter = this.requireAdapter(existing.harness!);
+      const runtime = this.store.getAgentRuntimeConfig(room, memberId);
+      const session = adapter.spawn({
+        cwd: existing.cwd ?? process.cwd(),
+        policy: existing.policy,
+        model: existing.model,
+        thinking: existing.thinking,
+        acp_launch: runtime?.acp_launch,
+      });
+      const cleared = this.store.clearAgentContext(room, memberId);
+      this.issueMemberCredential(room, cleared, session);
+      this.sessions.set(memberId, session);
+      const restarted = this.store.updateMember(room, memberId, {
+        state: 'idle', custody: 'owned', failure: undefined,
+      });
+      this.emitMember(room, restarted);
+      this.track(this.maybeStartTurn(room, memberId));
+      return restarted;
+    } catch (error) {
+      const summary = error instanceof Error ? error.message : String(error);
+      const failed = this.store.updateMember(room, memberId, {
+        failure: {
+          code: 'restart_failed',
+          summary,
+          ts: new Date().toISOString(),
+          resume_capability: 'replace',
+          recommended_action: 'replace_and_continue',
+          restart_attempted: true,
+        },
+      });
+      this.emitMember(room, failed);
+      throw new Error(`could not restart @${existing.handle}: ${summary}`);
+    }
+  }
+
+  private async replacementBrief(room: string, member: Member): Promise<string> {
+    const project = this.store.getProject(room);
+    const tasks = project?.tasks.filter((task) =>
+      task.assignee === member.id || task.gatekeepers.includes(member.id)).slice(0, 8) ?? [];
+    const messages = this.store.listMessages(room, { limit: Number.MAX_SAFE_INTEGER })
+      .filter((message) => message.author === member.id ||
+        message.mentions.some((mention) => mention.member_id === member.id))
+      .slice(-6);
+    let git = 'Git: unavailable (working directory is not a readable Git repository).';
+    if (member.cwd !== undefined) {
+      try {
+        const root = (await runGitRead(member.cwd, ['rev-parse', '--show-toplevel'])).trim();
+        const head = (await runGitRead(member.cwd, ['rev-parse', 'HEAD'])).trim();
+        const branch = (await runGitRead(member.cwd, ['branch', '--show-current'])).trim() || '(detached)';
+        const dirty = (await runGitRead(member.cwd, ['status', '--porcelain=v1'])).trim();
+        git = `Git: root ${root}; branch ${branch}; HEAD ${head}; ${dirty === '' ? 'clean' : 'dirty'}.`;
+      } catch {
+        // The brief stays honest without turning replacement into a Git requirement.
+      }
+    }
+    return [
+      `[replacement recovery brief for @${member.handle}]`,
+      `You replace the failed member with the same harness, model, policy, working directory, billing mode, accent, and full saved purpose. Do not infer that its uncertain active tool turn completed, and do not replay it automatically.`,
+      `Failure: ${member.failure?.summary ?? 'the prior member became unavailable'}`,
+      project === undefined
+        ? 'Project: this channel has no canonical project board.'
+        : `Project: ${project.title} (${project.status})\nObjective: ${project.objective}\nCoordinator: @${this.store.getMember(room, project.coordinator)?.handle ?? project.coordinator}`,
+      tasks.length === 0
+        ? 'Relevant board tasks: none.'
+        : `Relevant board tasks:\n${tasks.map((task) =>
+            `- ${task.id} [${task.status}] r${String(task.revision)}: ${task.title}; acceptance: ${task.acceptance_criteria.join('; ')}`,
+          ).join('\n')}`,
+      messages.length === 0
+        ? 'Relevant recent messages: none.'
+        : `Relevant recent messages:\n${messages.map((message) =>
+            `- #${String(message.id)} @${this.store.getMember(room, message.author)?.handle ?? 'unknown'}: ${message.body.replace(/\s+/g, ' ').slice(0, 600)}`,
+          ).join('\n')}`,
+      git,
+      'Read the canonical board and repository before acting. Continue only the next safe, unambiguous action; if blocked or a review/decision is needed, report it explicitly to the coordinator. Do not start hidden Goal/CreateGoal or automatic continuation state; Codor owns later deliveries.',
+    ].join('\n\n').slice(0, 12_000);
+  }
+
+  async replaceMemberAndContinue(room: string, memberId: string): Promise<Member> {
+    const existing = this.store.getMember(room, memberId);
+    if (!existing || existing.kind !== 'agent' || existing.removed_ts !== undefined) {
+      throw new Error(`no such agent member: ${memberId}`);
+    }
+    if (existing.state !== 'dead') throw new Error(`member @${existing.handle} is not dead`);
+    const brief = await this.replacementBrief(room, existing);
+    const runtime = this.store.getAgentRuntimeConfig(room, memberId);
+    let session: Session;
+    try {
+      const adapter = this.requireAdapter(existing.harness!);
+      const spawnOpts = {
+        cwd: existing.cwd ?? process.cwd(),
+        policy: existing.policy,
+        model: existing.model,
+        thinking: existing.thinking,
+        acp_launch: runtime?.acp_launch,
+      };
+      validateSpawnOptions(adapter, spawnOpts);
+      session = adapter.spawn(spawnOpts);
+    } catch (error) {
+      const summary = error instanceof Error ? error.message : String(error);
+      const failed = this.store.updateMember(room, memberId, {
+        failure: {
+          code: 'replacement_failed',
+          summary,
+          ts: new Date().toISOString(),
+          resume_capability: 'replace',
+          recommended_action: 'replace_and_continue',
+        },
+      });
+      this.emitMember(room, failed);
+      throw new Error(`could not replace @${existing.handle}: ${summary}`);
+    }
+
+    const replaced = this.store.replaceMember(room, memberId, {
+      kind: 'agent',
+      handle: existing.handle,
+      display_name: existing.display_name,
+      purpose: existing.purpose,
+      accent: existing.accent,
+      billing_mode: existing.billing_mode,
+      harness: existing.harness,
+      cwd: existing.cwd,
+      policy: existing.policy,
+      model: existing.model,
+      thinking: existing.thinking,
+      acp_provider: existing.acp_provider,
+      host: this.hostId,
+      state: 'idle',
+      custody: 'owned',
+    }, { acp_launch: runtime?.acp_launch });
+    this.sessions.delete(memberId);
+    this.staleSessions.delete(memberId);
+    this.lastUsage.delete(memberId);
+    this.issueMemberCredential(room, replaced.replacement, session);
+    this.sessions.set(replaced.replacement.id, session);
+    this.markRostersStale(room);
+    this.emitMember(room, replaced.removed);
+    this.emitMember(room, replaced.replacement);
+
+    const project = this.store.getProject(room);
+    if (project !== undefined) {
+      const marker = `[member-failure:${memberId}]`;
+      const tasks = project.tasks.map((task) => {
+        const wasFailureBlocked = task.status === 'blocked' && task.evidence.some((evidence) =>
+          evidence.type === 'note' && evidence.text.includes(marker));
+        return {
+          ...task,
+          ...(task.assignee === memberId && { assignee: replaced.replacement.id }),
+          gatekeepers: [...new Set(task.gatekeepers.map((id) =>
+            id === memberId ? replaced.replacement.id : id))],
+          ...(wasFailureBlocked && {
+            status: 'ready' as const,
+            revision: task.revision + 1,
+            reviews: task.reviews,
+          }),
+        };
+      });
+      this.saveProject({
+        room: project.room,
+        title: project.title,
+        objective: project.objective,
+        status: project.status,
+        coordinator: project.coordinator === memberId ? replaced.replacement.id : project.coordinator,
+        guarded_autopilot: project.guarded_autopilot,
+        ...(project.continuation && { continuation: project.continuation }),
+        milestones: project.milestones,
+        tasks,
+      }, project.version);
+    }
+
+    const committed = this.store.commitRoutedMessage(room, {
+      message: this.projectSystemMessage(room, brief),
+      plan: (message) => ({
+        fanout: this.projectFanout(room, message, [replaced.replacement.id], new Map(), 1),
+      }),
+    });
+    this.emitMessage(room, committed.message);
+    this.dispatchCreatedDeliveries(room, committed.deliveries);
+    this.reconcileProjectAutomation(room);
+    return replaced.replacement;
   }
   // harn:end copilot-vscode-revive-requires-exact-live-cache
 
@@ -1937,11 +2250,14 @@ export class Daemon {
     }
     // harn:assume cli-member-recovery-is-actionable ref=attach-error-remediation
     if (existing.state === 'dead') {
-      throw new Error(
-        existing.session_ref
-          ? `member @${existing.handle} is dead; revive it to retry`
-          : `member @${existing.handle} is dead; remove it and spawn a replacement`,
-      );
+      const action = existing.failure?.recommended_action ?? this.recoveryFor(room, existing).recommended_action;
+      throw new Error(`member @${existing.handle} is dead; ${
+        action === 'revive'
+          ? 'revive it to retry'
+          : action === 'restart'
+            ? 'restart it once from fresh context'
+            : 'replace and continue from its recovery brief'
+      }`);
     }
     // harn:end cli-member-recovery-is-actionable
     if (existing.state === 'awaiting_input') {
@@ -2216,8 +2532,14 @@ export class Daemon {
     }
     this.memberWaits.delete(memberId);
     this.groupWaits.delete(memberId);
-    const member = this.store.updateMember(room, memberId, { state: 'dead' });
-    this.emitMember(room, member);
+    const safeFresh = !this.inflight.has(memberId) &&
+      existing.state !== 'running' && existing.state !== 'awaiting_input';
+    const member = this.failMember(room, existing, {
+      code: 'operator_killed',
+      summary: safeFresh
+        ? 'the operator stopped this idle agent'
+        : 'the operator stopped this agent while a turn could have been active',
+    }, safeFresh);
     for (const delivery of this.store.listDeliveries(room, { recipient: memberId })) {
       if (
         delivery.group_id !== undefined &&
@@ -2227,12 +2549,13 @@ export class Daemon {
         this.skipUnavailableGroupDelivery(room, delivery);
       }
     }
-    this.postSystemMessage(
-      room,
-      member.session_ref
-        ? `@${member.handle} was killed; revive to retry`
-        : `@${member.handle} was killed; remove it and spawn a replacement`,
-    );
+    this.postSystemMessage(room, `@${member.handle} was killed; ${
+      member.failure?.recommended_action === 'revive'
+          ? 'revive its persisted session, or remove it and spawn a replacement if that fails'
+        : member.failure?.recommended_action === 'restart'
+          ? 'one safe fresh restart is available; otherwise remove it and spawn a replacement'
+          : 'remove it and spawn a replacement with Replace and continue from a recovery brief'
+    }`);
     return member;
   }
 
@@ -4163,6 +4486,16 @@ export class Daemon {
       ? routedFanout.filter((delivery) => explicitRecipients.has(delivery.recipient))
       : routedFanout;
     const day = new Date().toISOString().slice(0, 10);
+    const currentMember = this.store.getMember(room, memberId);
+    const durableFailure = completion.status === 'failed' && !recoverableFailure && currentMember !== undefined
+      ? {
+          code: 'turn_failed' as const,
+          summary: (failure ?? 'agent turn failed').slice(0, 4_000),
+          run_message_id: runMsgId,
+          ts: endedTs,
+          ...this.recoveryFor(room, currentMember),
+        }
+      : undefined;
     const completed = this.store.completeTurn(room, {
       runMsgId,
       message: messagePatch,
@@ -4179,6 +4512,7 @@ export class Daemon {
               : this.store.getMember(room, memberId)?.state === 'paused'
                 ? 'paused'
                 : 'idle',
+        failure: durableFailure,
         ...(planned.result.misaddressed && { misaddressed: true }),
       },
       meterDay: day,
@@ -4241,11 +4575,14 @@ export class Daemon {
     this.runActivity.delete(`${room}:${runMsgId}`);
     // harn:assume vscode-copilot-recoverable-native-failure-preserves-context ref=vscode-copilot-recoverable-finalization
     if (completion.status === 'failed' && !recoverableFailure) {
+      this.blockDeadProjectAssignee(room, completed.member);
       this.postSystemMessage(
         room,
-        completed.member.session_ref
-          ? `@${completed.member.handle} died mid-run (turn #${runMsgId} failed); revive to retry`
-          : `@${completed.member.handle} died mid-run (turn #${runMsgId} failed); remove it and spawn a replacement`,
+        `@${completed.member.handle} died mid-run (turn #${runMsgId} failed): ${
+          completed.member.failure?.summary ?? 'agent turn failed'
+        }. ${completed.member.failure?.recommended_action === 'revive'
+          ? 'Revive its persisted session.'
+          : 'Replace and continue from a recovery brief; the uncertain turn will not be replayed.'}`,
       );
     }
     // harn:end vscode-copilot-recoverable-native-failure-preserves-context
@@ -4618,10 +4955,16 @@ export class Daemon {
         if (this.isRemoteMember(member)) {
           if (!this.residency?.isReachable(member.host)) {
             if (member.state !== 'unreachable') {
-              this.emitMember(
-                room.id,
-                this.store.updateMember(room.id, member.id, { state: 'unreachable' }),
-              );
+              this.emitMember(room.id, this.store.updateMember(room.id, member.id, {
+                state: 'unreachable',
+                failure: {
+                  code: 'remote_unreachable',
+                  summary: `resident switchboard ${member.host} is unreachable`,
+                  ts: new Date().toISOString(),
+                  resume_capability: 'wait',
+                  recommended_action: 'wait_for_host',
+                },
+              }));
             }
             continue;
           }
@@ -5211,11 +5554,13 @@ export class Daemon {
 
     const current = this.store.getMember(room, member.id);
     if (current?.state !== 'dead') {
-      const dead = this.store.updateMember(room, member.id, { state: 'dead' });
-      this.emitMember(room, dead);
+      const dead = this.failMember(room, member, {
+        code: 'native_session_lost',
+        summary: 'the live VS Code Copilot bridge session was lost',
+      });
       this.postSystemMessage(
         room,
-        `@${member.handle} lost its live VS Code Copilot session; reload the companion and revive it, or remove and recreate the member`,
+        `@${member.handle} lost its live VS Code Copilot session; reload the companion and revive the exact session, or remove and recreate it with Replace and continue`,
       );
     }
     return false;
@@ -5337,7 +5682,13 @@ export class Daemon {
     const task = project.tasks.find((candidate) => candidate.id === taskId);
     if (!task?.assignee) return project;
     const assignee = this.store.getMember(project.room, task.assignee);
-    if (!assignee || assignee.removed_ts !== undefined) return project;
+    if (!assignee || assignee.removed_ts !== undefined || assignee.state === 'dead') {
+      this.blockDeadProjectAssignee(project.room, assignee ?? {
+        id: task.assignee,
+        handle: task.assignee,
+      });
+      return this.store.getProject(project.room) ?? project;
+    }
     const committed = this.store.commitProjectDispatch(project.room, {
       expectedVersion: project.version,
       message: this.projectSystemMessage(project.room, this.projectTaskBody(project, task)),

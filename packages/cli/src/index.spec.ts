@@ -1483,7 +1483,7 @@ describe('@codor/cli', () => {
     const firstTurnDeath = daemon.spawnMember('eng', { harness: 'fake', handle: 'first-turn', cwd: dir });
     daemon.killMember('eng', firstTurnDeath.id);
     await expect(cli('attach', '-r', 'eng', '@first-turn')).rejects.toThrow(
-      'member @first-turn is dead; remove it and spawn a replacement',
+      'member @first-turn is dead; restart it once from fresh context',
     );
 
     daemon.createRoom({

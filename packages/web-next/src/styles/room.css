@@ -1349,6 +1349,11 @@
   border-radius: var(--r-card);
 }
 .nx-member:hover { background: var(--c-muted); }
+.nx-member-failure {
+  margin: var(--sp-1) 0 0 calc(32px + var(--sp-3));
+  color: var(--c-error-text);
+  font: var(--t-caption);
+}
 .nx-member-limits {
   display: flex;
   flex-wrap: wrap;

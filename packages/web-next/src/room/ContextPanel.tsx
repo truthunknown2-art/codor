@@ -633,6 +633,14 @@ function MemberCard(props: {
   const PolicyIcon = policy === '' ? undefined : POLICY_ICON[policy];
   const policyLabel = policy === '' ? undefined : POLICY_LABEL[policy];
   const stateLabel = memberStateLabel(member.state);
+  const recommendedRecovery = member.failure?.recommended_action ?? (
+    member.harness === 'acp'
+      ? 'replace_and_continue'
+      : member.session_ref !== undefined ? 'revive' : 'replace_and_continue'
+  );
+  const recoveryAction = recommendedRecovery === 'wait_for_host'
+    ? 'replace_and_continue'
+    : recommendedRecovery;
 
   // harn:assume agent-member-card-composes-two-compact-rows ref=member-card-compact-rows
   return (
@@ -767,15 +775,21 @@ function MemberCard(props: {
                   <button
                     type="button"
                     className="nx-member-revive"
-                    data-testid={`member-${member.handle}-revive`}
+                    data-testid={`member-${member.handle}-${recoveryAction.replaceAll('_', '-')}`}
                     disabled={reviving}
-                    title={reviving ? 'Reviving…' : `Revive @${member.handle} from its saved session`}
-                    aria-label={`Revive @${member.handle}`}
+                    title={reviving
+                      ? 'Recovering…'
+                      : recoveryAction === 'revive'
+                        ? `Revive @${member.handle} from its saved session`
+                        : recoveryAction === 'restart'
+                          ? `Restart @${member.handle} once with fresh native context`
+                          : `Replace @${member.handle} and deliver a bounded recovery brief`}
+                    aria-label={`${recoveryAction === 'revive' ? 'Revive' : recoveryAction === 'restart' ? 'Restart' : 'Replace and continue'} @${member.handle}`}
                     onClick={() => {
                       if (reviving) return;
                       revivedAt.current = { errors: errorCount, member };
                       setReviving(true);
-                      props.connection.act({ act: 'revive', member_id: member.id });
+                      props.connection.act({ act: recoveryAction, member_id: member.id });
                     }}
                   >
                     {reviving
@@ -828,6 +842,13 @@ function MemberCard(props: {
         </div>
       </div>
       {/* harn:end agent-member-card-composes-two-compact-rows */}
+      {member.failure !== undefined && (
+        <p className="nx-member-failure" data-testid={`member-${member.handle}-failure`}>
+          {member.failure.summary}
+          {member.failure.run_message_id !== undefined ? ` · turn #${String(member.failure.run_message_id)}` : ''}
+          {member.failure.recommended_action === 'wait_for_host' ? ' · wait for the resident host to reconnect' : ''}
+        </p>
+      )}
       {member.limits !== undefined && member.limits.length > 0 && (
         <p className="nx-member-limits" data-testid={`member-${member.handle}-limits`}>
           {member.limits.map((limit) =>

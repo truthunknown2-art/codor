@@ -1178,6 +1178,8 @@ describe('WS client frames', () => {
     ['remove', { act: 'remove', member_id: ULID_A }],
     ['rename', { act: 'rename', member_id: ULID_A, handle: 'reviewer' }],
     ['revive', { act: 'revive', member_id: ULID_A }],
+    ['restart', { act: 'restart', member_id: ULID_A }],
+    ['replace_and_continue', { act: 'replace_and_continue', member_id: ULID_A }],
     ['kill', { act: 'kill', member_id: ULID_A }],
     ['pause', { act: 'pause', member_id: ULID_A }],
     ['unpause', { act: 'unpause', member_id: ULID_A }],

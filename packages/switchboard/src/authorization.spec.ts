@@ -30,6 +30,8 @@ const actSamples = {
   spawn: { act: 'spawn', harness: 'fake', handle: 'runner', cwd: '/w' },
   rename: { act: 'rename', member_id: '01J00000000000000000000000', handle: 'renamed' },
   revive: { act: 'revive', member_id: '01J00000000000000000000000' },
+  restart: { act: 'restart', member_id: '01J00000000000000000000000' },
+  replace_and_continue: { act: 'replace_and_continue', member_id: '01J00000000000000000000000' },
   kill: { act: 'kill', member_id: '01J00000000000000000000000' },
   // harn:assume removed-members-remain-attribution-tombstones ref=member-removal-role-matrix
   remove: { act: 'remove', member_id: '01J00000000000000000000000' },

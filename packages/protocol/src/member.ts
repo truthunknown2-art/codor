@@ -30,6 +30,38 @@ export type BillingMode = z.infer<typeof BillingModeSchema>;
 export const MemberAccentSchema = z.string().trim().min(1).max(64);
 export type MemberAccent = z.infer<typeof MemberAccentSchema>;
 
+export const MemberFailureSchema = z.object({
+  code: z.enum([
+    'operator_killed',
+    'turn_failed',
+    'native_session_lost',
+    'remote_unreachable',
+    'restart_failed',
+    'replacement_failed',
+  ]),
+  summary: z.string().trim().min(1).max(4_000),
+  run_message_id: z.number().int().positive().optional(),
+  ts: TimestampSchema,
+  resume_capability: z.enum(['native', 'fresh', 'replace', 'wait']),
+  recommended_action: z.enum(['revive', 'restart', 'replace_and_continue', 'wait_for_host']),
+  restart_attempted: z.boolean().optional(),
+}).strict().superRefine((failure, ctx) => {
+  const action = {
+    native: 'revive',
+    fresh: 'restart',
+    replace: 'replace_and_continue',
+    wait: 'wait_for_host',
+  } as const;
+  if (failure.recommended_action !== action[failure.resume_capability]) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['recommended_action'],
+      message: 'recommended recovery action must match the supported recovery capability',
+    });
+  }
+});
+export type MemberFailure = z.infer<typeof MemberFailureSchema>;
+
 // harn:assume reserved-handles-rejected ref=handle-schema
 export const HANDLE_REGEX = /^[a-z0-9][a-z0-9-]{1,30}$/;
 export const RESERVED_HANDLES = ['all', 'switchboard'] as const;
@@ -214,6 +246,7 @@ export const MemberSchema = z
     // harn:end last-agent-usage-is-transient-and-seeded
     // harn:end normalized-agent-usage-telemetry-with-estimates
     state: MemberStateSchema.optional(),
+    failure: MemberFailureSchema.optional(),
     custody: CustodySchema.optional(),
     parent: MemberIdSchema.optional(), // extensions only: spawning member
     // humans only (enforcement lands M5):

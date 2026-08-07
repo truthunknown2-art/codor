@@ -149,6 +149,8 @@ export const ActSchema = z.discriminatedUnion('act', [
     display_name: z.string().optional(),
   }),
   z.object({ act: z.literal('revive'), member_id: MemberIdSchema }),
+  z.object({ act: z.literal('restart'), member_id: MemberIdSchema }),
+  z.object({ act: z.literal('replace_and_continue'), member_id: MemberIdSchema }),
   z.object({ act: z.literal('kill'), member_id: MemberIdSchema }),
   // harn:assume removed-members-remain-attribution-tombstones ref=remove-act-contract
   z.object({ act: z.literal('remove'), member_id: MemberIdSchema }),
