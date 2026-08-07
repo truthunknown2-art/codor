@@ -48,6 +48,7 @@ import {
   MemberStatusResponseSchema,
   ProducedArtifactSchema,
   ProducedArtifactErrorSchema,
+  deriveAgentAccent,
   deriveRoomId,
   parseRunItemPayload,
 } from '@codor/protocol';
@@ -1686,7 +1687,7 @@ export class Daemon {
       handle: opts.handle,
       display_name: opts.display_name ?? opts.handle,
       purpose: opts.purpose,
-      accent: opts.accent,
+      accent: opts.accent ?? deriveAgentAccent(opts.handle),
       billing_mode: opts.billing_mode,
       harness: opts.harness,
       cwd,

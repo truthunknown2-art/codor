@@ -44,6 +44,7 @@ import {
   TeamProfileSchema,
   type RunSummary,
   RunSummarySchema,
+  deriveAgentAccent,
   deriveRoomColor,
 } from '@codor/protocol';
 
@@ -368,6 +369,12 @@ function migrateMemberPresentation(db: Database.Database): void {
   if (!columns.some((column) => column.name === 'billing_mode')) {
     db.exec("ALTER TABLE members ADD COLUMN billing_mode TEXT NOT NULL DEFAULT 'unknown'");
   }
+  const missing = db.prepare("SELECT id, handle FROM members WHERE kind = 'agent' AND accent IS NULL")
+    .all() as { id: string; handle: string }[];
+  const update = db.prepare('UPDATE members SET accent = ? WHERE id = ?');
+  db.transaction(() => {
+    for (const member of missing) update.run(deriveAgentAccent(member.handle), member.id);
+  })();
 }
 
 function migrateMemberFailure(db: Database.Database): void {

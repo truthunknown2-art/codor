@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { AgentLimit, HarnessAdapter, Message, ServerFrame, Session, SpawnOpts, WireEvent } from '@codor/protocol';
+import { deriveAgentAccent } from '@codor/protocol';
 import { createTurnTranslator as createCodexTurnTranslator } from '@codor/adapter-codex';
 import { AcpAdapter } from '@codor/adapter-acp';
 import { createTurnTranslator, wireEventFromHook } from '@codor/adapter-claude-code';
@@ -4172,6 +4173,7 @@ describe('a channel-seeded agent gets the permission the operator chose', () => 
     });
     const seeded = daemon.store.listMembers('ops').find((member) => member.handle === 'codor')!;
     expect(seeded.policy).toBe('full-access');
+    expect(seeded.accent).toBe(deriveAgentAccent(seeded.handle));
   });
 
   it('still seeds an agent that was given no policy, and says so honestly', () => {

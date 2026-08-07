@@ -343,6 +343,8 @@ Verification evidence:
 - Focused identity, cost, mention, Git client, and project mutation suites passed
   33/33 tests. Focused automation and Git daemon coverage passed 19/19 tests,
   including real commit-object resolution and writer serialization.
+- The complete store suite passed 86/86 tests, including restart-safe accent
+  backfill for existing agents.
 - The focused desktop/mobile channel-state browser flow passed 1/1, covering
   coloured channel previews, working status, and the responsive mobile header.
 - The six light and six dark text accents measured between 5.02:1 and 12.06:1
