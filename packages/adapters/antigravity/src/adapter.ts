@@ -114,6 +114,7 @@ export class AntigravityAdapter implements HarnessAdapter {
   // harn:end canonical-spawn-controls-enforced
 
   private readonly children = new WeakMap<Session, ChildProcess>();
+  private readonly interrupted = new WeakSet<ChildProcess>();
   private readonly displayNames = new Map<string, string>();
 
   constructor(private readonly command = 'agy') {}
@@ -245,9 +246,11 @@ export class AntigravityAdapter implements HarnessAdapter {
       // harn:end antigravity-session-resume-is-log-derived
 
       const detail = stderr.trim() || childError?.message;
-      const status = childError !== undefined || (exit.code !== null && exit.code !== 0)
-        ? 'failed'
-        : exit.signal !== null ? 'interrupted' : 'completed';
+      const status = this.interrupted.has(child) || exit.signal !== null
+        ? 'interrupted'
+        : childError !== undefined || (exit.code !== null && exit.code !== 0)
+          ? 'failed'
+          : 'completed';
       const evidence = status === 'completed' ? output.trim() : output.trim() || detail || '';
       const finalText = finalOutput(evidence, truncated);
       terminal = true;
@@ -281,7 +284,10 @@ export class AntigravityAdapter implements HarnessAdapter {
 
   interrupt(session: Session): void {
     const child = this.children.get(session);
-    if (child) this.signal(child, 'SIGINT');
+    if (child) {
+      this.interrupted.add(child);
+      this.signal(child, 'SIGINT');
+    }
   }
 
   // harn:assume member-context-reset-is-authorized-atomic-and-lazy ref=first-party-cli-session-reset

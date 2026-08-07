@@ -244,17 +244,25 @@ assert.doesNotMatch(packedProof, /npm_config_audit|--no-audit/);
 // harn:end packed-release-proof-runs-install-runtime
 
 // harn:assume verified-commit-installers-are-sha-addressed-and-ephemeral ref=commit-installer-release-audit
-const commitInstallerJobStart = ciWorkflow.indexOf('commit-installers:');
-const commitInstallerJobEnd = ciWorkflow.indexOf('deploy-production:', commitInstallerJobStart);
-assert.ok(commitInstallerJobStart >= 0 && commitInstallerJobEnd > commitInstallerJobStart);
-const commitInstallerJob = ciWorkflow.slice(commitInstallerJobStart, commitInstallerJobEnd);
-assert.match(commitInstallerJob, /needs:\s+verify/);
-assert.match(commitInstallerJob, /permissions:\s+contents:\s+read/);
-assert.match(commitInstallerJob, /scripts\/package-release-artifacts\.sh/);
-assert.match(commitInstallerJob, /actions\/upload-artifact@v7/);
-assert.match(commitInstallerJob, /name: codor-installers-\$\{\{\s*github\.sha\s*\}\}/);
-assert.match(commitInstallerJob, /retention-days:\s*14/);
-assert.doesNotMatch(commitInstallerJob, /npm\s+publish|gh\s+release|CLOUDFLARE_|deploy:app/);
+const commitInstallerBlockStart = ciWorkflow.indexOf('ref=ci-commit-installer-artifacts');
+const commitInstallerBlockEnd = ciWorkflow.indexOf(
+  'harn:end verified-commit-installers-are-sha-addressed-and-ephemeral',
+  commitInstallerBlockStart,
+);
+const releaseAuditStep = ciWorkflow.indexOf('pnpm audit:release');
+assert.ok(
+  releaseAuditStep >= 0 &&
+    commitInstallerBlockStart > releaseAuditStep &&
+    commitInstallerBlockEnd > commitInstallerBlockStart,
+  'commit installers must be built after the verification audits',
+);
+const commitInstallerBlock = ciWorkflow.slice(commitInstallerBlockStart, commitInstallerBlockEnd);
+assert.match(ciWorkflow, /permissions:\s+contents:\s+read/);
+assert.match(commitInstallerBlock, /scripts\/package-release-artifacts\.sh/);
+assert.match(commitInstallerBlock, /actions\/upload-artifact@v7/);
+assert.match(commitInstallerBlock, /name: codor-installers-\$\{\{\s*github\.sha\s*\}\}/);
+assert.match(commitInstallerBlock, /retention-days:\s*14/);
+assert.doesNotMatch(commitInstallerBlock, /npm\s+publish|gh\s+release|CLOUDFLARE_|deploy:app/);
 assert.match(releaseArtifactBuilder, /pnpm build:artifact/);
 assert.match(releaseArtifactBuilder, /\$ROOT\/packages\/adapters\/copilot\/node_modules\/\.bin\/vsce" package/);
 assert.doesNotMatch(releaseArtifactBuilder, /pnpm dlx|rm -rf -- "\$OUT_DIR"/);

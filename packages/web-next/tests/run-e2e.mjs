@@ -11,7 +11,10 @@ import { fileURLToPath } from 'node:url';
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const testsRoot = join(packageRoot, 'tests');
 const portsPerSpec = 4;
-const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
+const pnpmScript = process.env.npm_execpath;
+const pnpm = process.platform === 'win32' && pnpmScript
+  ? { command: process.execPath, prefix: [pnpmScript] }
+  : { command: 'pnpm', prefix: [] };
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -21,6 +24,10 @@ function run(command, args, options = {}) {
   });
   if (result.error) throw result.error;
   return result.status;
+}
+
+function runPnpm(args, options = {}) {
+  return run(pnpm.command, [...pnpm.prefix, ...args], options);
 }
 
 // harn:assume concurrent-browser-suites-do-not-collide ref=e2e-runner-port-selection
@@ -86,7 +93,7 @@ const specs = readdirSync(testsRoot)
   .sort();
 if (specs.length === 0) throw new Error('no browser spec file matched the suite pattern');
 
-if (run(pnpm, ['-r', 'build']) !== 0) {
+if (runPnpm(['-r', 'build']) !== 0) {
   throw new Error('workspace build failed before browser tests');
 }
 
@@ -106,8 +113,7 @@ try {
       `\n[e2e] ${spec} on ports ${String(apiPort)}-${String(apiPort + portsPerSpec - 1)}\n`,
     );
     // harn:assume playwright-spec-files-use-isolated-daemons ref=isolated-e2e-spec-ports
-    const status = run(
-      pnpm,
+    const status = runPnpm(
       ['exec', 'playwright', 'test', `tests/${spec}`, '--reporter=list,json'],
       {
         env: {
