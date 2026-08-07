@@ -138,6 +138,212 @@ describe('project live state', () => {
   });
 });
 
+describe('guarded project delivery automation', () => {
+  function createProject(options: {
+    dependent?: boolean;
+    initialText?: string;
+    initialStatus?: 'completed' | 'failed';
+    initialError?: string;
+  } = {}) {
+    const planner = spawnAgent('planner');
+    const coder = spawnAgent('coder');
+    const reviewer = spawnAgent('reviewer');
+    daemon.pauseMember('eng', planner.id);
+    daemon.pauseMember('eng', reviewer.id);
+    let project = daemon.mutateProject('eng', planner.id, {
+      op: 'init', expected_version: 0, title: 'Ship', objective: 'Measured production result',
+      coordinator: planner.id, guarded_autopilot: true,
+    });
+    project = daemon.mutateProject('eng', planner.id, {
+      op: 'add_milestone', expected_version: project.version, id: 'm1', title: 'Build',
+    });
+    project = daemon.mutateProject('eng', planner.id, {
+      op: 'add_task', expected_version: project.version, id: 't1', milestone_id: 'm1',
+      title: 'Implement', description: 'Make the change', acceptance_criteria: ['tests pass'],
+      dependencies: [], assignee: coder.id, gatekeepers: [reviewer.id], workspace_mode: 'write',
+    });
+    if (options.dependent === true) {
+      project = daemon.mutateProject('eng', planner.id, {
+        op: 'add_task', expected_version: project.version, id: 't2', milestone_id: 'm1',
+        title: 'Document', description: 'Record the result', acceptance_criteria: ['handoff exists'],
+        dependencies: ['t1'], assignee: planner.id, gatekeepers: [], workspace_mode: 'read_only',
+      });
+    }
+    fake.enqueue({
+      kind: 'complete',
+      final_text: options.initialText ?? 'implemented; tests pass',
+      status: options.initialStatus,
+      error: options.initialError,
+    });
+    project = daemon.mutateProject('eng', planner.id, {
+      op: 'set_status', expected_version: project.version, status: 'active',
+    });
+    return { planner, coder, reviewer, project };
+  }
+
+  it('dispatches once, returns an unmentioned result, and preserves the link across restart', async () => {
+    const { planner, reviewer } = createProject();
+    await daemon.settle();
+    let project = daemon.store.getProject('eng')!;
+    const task = project.tasks[0]!;
+    expect(task.status).toBe('in_review');
+    expect(task.dispatches?.work).toHaveLength(1);
+    expect(task.dispatches?.reviews).toHaveLength(1);
+    expect(task.evidence.some((item) => item.type === 'message')).toBe(true);
+    expect(task.dispatches?.work[0]).toMatchObject({
+      revision: 0,
+      coordinator_delivery_id: expect.any(String),
+    });
+    expect(task.dispatches?.reviews[0]).toMatchObject({
+      revision: 0,
+      gatekeeper: reviewer.id,
+    });
+    expect(daemon.store.getDeliveryPayloadSnapshot(
+      'eng', task.dispatches!.reviews[0]!.delivery_id,
+    )).toContain('codor project review t1 -r eng');
+    expect(fake.deliveries[0]?.payload).toContain('Measured production result');
+    expect(fake.deliveries[0]?.payload).toContain('tests pass');
+    expect(fake.deliveries[0]?.payload).toContain('Do not start hidden Goal/CreateGoal');
+
+    await daemon.close();
+    daemon = newDaemon();
+    await daemon.reconcile();
+    await daemon.settle();
+    project = daemon.store.getProject('eng')!;
+    expect(project.tasks[0]?.dispatches?.work).toHaveLength(1);
+    expect(daemon.store.listDeliveries('eng', { recipient: planner.id, state: 'queued' })).toHaveLength(1);
+    expect(daemon.store.listDeliveries('eng', { recipient: reviewer.id, state: 'queued' })).toHaveLength(1);
+  });
+
+  it('redispatches one new revision after rejection and releases an assigned dependency', async () => {
+    const { planner, coder, reviewer } = createProject({ dependent: true });
+    await daemon.settle();
+    daemon.pauseMember('eng', coder.id);
+    let project = daemon.store.getProject('eng')!;
+    project = daemon.mutateProject('eng', reviewer.id, {
+      op: 'review', expected_version: project.version, task_id: 't1',
+      decision: 'changes_requested', note: 'correct the boundary',
+    });
+    expect(project.tasks[0]).toMatchObject({ status: 'ready', revision: 1 });
+    expect(project.tasks[0]?.dispatches?.work).toHaveLength(2);
+
+    fake.enqueue({ kind: 'complete', final_text: 'corrected; focused checks pass' });
+    daemon.unpauseMember('eng', coder.id);
+    await daemon.settle();
+    project = daemon.store.getProject('eng')!;
+    expect(project.tasks[0]).toMatchObject({ status: 'in_review', revision: 1 });
+    project = daemon.mutateProject('eng', reviewer.id, {
+      op: 'review', expected_version: project.version, task_id: 't1', decision: 'approved',
+    });
+    expect(project.tasks[0]?.status).toBe('done');
+    expect(project.tasks[1]?.status).toBe('ready');
+    expect(project.tasks[1]?.dispatches?.work).toHaveLength(1);
+    expect(daemon.store.listDeliveries('eng', { recipient: planner.id, state: 'queued' })
+      .some((delivery) => delivery.id === project.tasks[1]?.dispatches?.work[0]?.delivery_id)).toBe(true);
+  });
+
+  it('sends one continuation nudge, then pauses after a second non-advancing response', async () => {
+    const { planner, reviewer } = createProject();
+    await daemon.settle();
+    fake.enqueue(
+      { kind: 'complete', final_text: 'reviewed but did not record a board decision' },
+      { kind: 'complete', final_text: 'coordinator response without a board mutation' },
+      { kind: 'complete', final_text: 'second response without a board mutation' },
+    );
+    daemon.unpauseMember('eng', reviewer.id);
+    await daemon.settle();
+    daemon.unpauseMember('eng', planner.id);
+    await daemon.settle();
+
+    const project = daemon.store.getProject('eng')!;
+    expect(project.guarded_autopilot).toBe(false);
+    expect(project.tasks[0]?.status).toBe('in_review');
+    expect(daemon.store.listMessages('eng', { limit: 100 })
+      .filter((message) => message.body.startsWith('[guarded project continuation]'))).toHaveLength(1);
+    expect(daemon.store.listMessages('eng', { limit: 100 })
+      .some((message) => message.body.includes('coordinator returned twice without advancing the board'))).toBe(true);
+  });
+
+  it('blocks on an exact worker failure and never bypasses the configured turn brake', async () => {
+    createProject({
+      initialStatus: 'failed',
+      initialText: '',
+      initialError: 'compiler exited 17 at verified boundary',
+    });
+    await daemon.settle();
+    let project = daemon.store.getProject('eng')!;
+    expect(project.tasks[0]?.status).toBe('blocked');
+    expect(project.tasks[0]?.evidence).toContainEqual({
+      type: 'note', text: 'compiler exited 17 at verified boundary',
+    });
+    expect(daemon.store.listMessages('eng', { limit: 100 })
+      .some((message) => message.body.includes('compiler exited 17 at verified boundary'))).toBe(true);
+    expect(project.tasks[0]?.dispatches?.reviews).toHaveLength(0);
+
+    await daemon.close();
+    daemon = newDaemon();
+    daemon.createRoom({ id: 'braked', name: 'Braked', owner: { handle: 'owner', display_name: 'Owner' } });
+    const planner = daemon.spawnMember('braked', { harness: 'fake', handle: 'planner', cwd: testCwd('braked-planner') });
+    const coder = daemon.spawnMember('braked', { harness: 'fake', handle: 'coder', cwd: testCwd('braked-coder') });
+    let braked = daemon.mutateProject('braked', planner.id, {
+      op: 'init', expected_version: 0, title: 'Brake', objective: 'Respect brakes',
+      coordinator: planner.id, guarded_autopilot: true,
+    });
+    braked = daemon.mutateProject('braked', planner.id, {
+      op: 'add_milestone', expected_version: braked.version, id: 'm1', title: 'Build',
+    });
+    braked = daemon.mutateProject('braked', planner.id, {
+      op: 'add_task', expected_version: braked.version, id: 't1', milestone_id: 'm1',
+      title: 'Code', description: 'Do not start', acceptance_criteria: ['held'], dependencies: [],
+      assignee: coder.id, gatekeepers: [], workspace_mode: 'read_only',
+    });
+    daemon.store.updateRoomConfig('braked', { turn_brake: 1 });
+    fake.enqueue({ kind: 'complete', final_text: 'work completed before the onward brake' });
+    braked = daemon.mutateProject('braked', planner.id, {
+      op: 'set_status', expected_version: braked.version, status: 'active',
+    });
+    await daemon.settle();
+    braked = daemon.store.getProject('braked')!;
+    const coordinatorId = braked.tasks[0]?.dispatches?.work[0]?.coordinator_delivery_id;
+    expect(daemon.store.getDelivery('braked', coordinatorId!)?.state).toBe('held');
+    expect(braked.tasks[0]?.status).toBe('done');
+    expect(fake.deliveries.filter((delivery) => delivery.payload.includes('channel=braked'))).toHaveLength(1);
+  });
+
+  it('returns a task-linked collaboration barrier to the assignee before review', async () => {
+    const { planner, coder, reviewer } = createProject({
+      initialText: '@reviewer @planner inspect independently',
+    });
+    await daemon.settle();
+    let project = daemon.store.getProject('eng')!;
+    expect(project.tasks[0]).toMatchObject({ status: 'in_progress' });
+    expect(project.tasks[0]?.dispatches?.work[0]?.group_id).toEqual(expect.any(String));
+
+    fake.enqueue({ kind: 'complete', final_text: 'reviewer barrier result' });
+    daemon.unpauseMember('eng', reviewer.id);
+    await daemon.settle();
+    fake.enqueue(
+      { kind: 'complete', final_text: 'planner barrier result' },
+      { kind: 'complete', final_text: 'assignee synthesized both measured results', delay_ms: 100 },
+    );
+    daemon.unpauseMember('eng', planner.id);
+    await until(() => runMessages().some((message) =>
+      message.author === coder.id && message.run?.status === 'running') ? true : undefined);
+    daemon.pauseMember('eng', planner.id);
+    daemon.pauseMember('eng', reviewer.id);
+    await daemon.settle();
+
+    project = daemon.store.getProject('eng')!;
+    expect(project.tasks[0]?.status).toBe('in_review');
+    expect(project.tasks[0]?.dispatches?.work[0]?.group_id).toBeUndefined();
+    const resultEvidence = project.tasks[0]?.evidence.find((item) => item.type === 'message');
+    const result = resultEvidence?.type === 'message'
+      ? daemon.store.getMessage('eng', resultEvidence.message_id)
+      : undefined;
+    expect(result?.run?.final_text).toBe('assignee synthesized both measured results');
+  });
+});
+
 // harn:assume continuation-writer-follows-journaled-output-ownership ref=continuation-writer-regression
 // harn:assume finalized-turn-routes-aggregate-from-terminal-output ref=aggregate-routing-regression
 describe('chronological continuation writer', () => {

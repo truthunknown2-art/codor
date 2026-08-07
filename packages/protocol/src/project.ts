@@ -47,6 +47,37 @@ export const ProjectMilestoneSchema = z.object({
 }).strict();
 export type ProjectMilestone = z.infer<typeof ProjectMilestoneSchema>;
 
+const ProjectDispatchResultSchema = z.object({
+  delivery_id: boundedText(128),
+  result_message_id: MessageIdSchema.optional(),
+  coordinator_delivery_id: boundedText(128).optional(),
+  coordinator_version: z.number().int().positive().optional(),
+}).strict().superRefine((dispatch, ctx) => {
+  if ((dispatch.coordinator_delivery_id === undefined) !== (dispatch.coordinator_version === undefined)) {
+    ctx.addIssue({
+      code: 'custom',
+      path: [dispatch.coordinator_delivery_id === undefined ? 'coordinator_delivery_id' : 'coordinator_version'],
+      message: 'coordinator delivery id and version must be provided together',
+    });
+  }
+});
+
+const ProjectWorkDispatchSchema = ProjectDispatchResultSchema.and(z.object({
+  revision: z.number().int().nonnegative(),
+  group_id: boundedText(128).optional(),
+}).strict());
+
+const ProjectReviewDispatchSchema = ProjectDispatchResultSchema.and(z.object({
+  revision: z.number().int().nonnegative(),
+  gatekeeper: MemberIdSchema,
+}).strict());
+
+export const ProjectTaskDispatchesSchema = z.object({
+  work: z.array(ProjectWorkDispatchSchema).max(100),
+  reviews: z.array(ProjectReviewDispatchSchema).max(500),
+}).strict();
+export type ProjectTaskDispatches = z.infer<typeof ProjectTaskDispatchesSchema>;
+
 export const ProjectTaskSchema = z.object({
   id: boundedText(128),
   milestone_id: boundedText(128),
@@ -61,9 +92,18 @@ export const ProjectTaskSchema = z.object({
   revision: z.number().int().nonnegative(),
   evidence: z.array(ProjectEvidenceSchema).max(50),
   reviews: z.array(ProjectReviewSchema).max(50),
+  dispatches: ProjectTaskDispatchesSchema.optional(),
 }).strict().superRefine((task, ctx) => {
   if (task.dependencies.includes(task.id)) {
     ctx.addIssue({ code: 'custom', path: ['dependencies'], message: 'a task cannot depend on itself' });
+  }
+  const workRevisions = task.dispatches?.work.map((dispatch) => dispatch.revision) ?? [];
+  if (!unique(workRevisions)) {
+    ctx.addIssue({ code: 'custom', path: ['dispatches', 'work'], message: 'work dispatch revisions must be unique' });
+  }
+  const reviewKeys = task.dispatches?.reviews.map((dispatch) => `${dispatch.revision}:${dispatch.gatekeeper}`) ?? [];
+  if (!unique(reviewKeys)) {
+    ctx.addIssue({ code: 'custom', path: ['dispatches', 'reviews'], message: 'review dispatches must be unique per revision and gatekeeper' });
   }
 });
 export type ProjectTask = z.infer<typeof ProjectTaskSchema>;
@@ -75,6 +115,10 @@ export const ProjectDocumentSchema = z.object({
   status: ProjectStatusSchema,
   coordinator: MemberIdSchema,
   guarded_autopilot: z.boolean(),
+  continuation: z.object({
+    delivery_id: boundedText(128),
+    project_version: z.number().int().positive(),
+  }).strict().optional(),
   milestones: z.array(ProjectMilestoneSchema).max(100),
   tasks: z.array(ProjectTaskSchema).max(500),
   version: z.number().int().positive(),
