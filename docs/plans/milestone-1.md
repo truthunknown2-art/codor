@@ -1,6 +1,6 @@
 # Milestone 1: Production team workflow
 
-Status: approved; Work Packages 1-6 complete; Work Package 7 implementation and local verification complete
+Status: approved; Work Packages 1-7 complete; Work Package 8 implementation and local Windows verification complete; binding CI, release, integration gate, and cutover pending
 Upstream baseline: `rjx18/codor@3b587c75cc02a9580ffbdaaafc217fc4d12d8cf5`
 Fork: `truthunknown2-art/codor`
 Production boundary: port `8137` and `C:\Users\pbirc\.codor` must remain untouched until final acceptance.
@@ -320,7 +320,8 @@ and concurrent-writer exclusion.
 Completion: agent colours match everywhere, subscription estimates are never
 called exact, and board evidence names verified Git state.
 
-WP7 result (2026-08-07): implementation and local verification complete.
+WP7 result (2026-08-07): complete and merged in PR #8 at
+`97191c3568ee7c783c7cda7942ca7e9b4e8ec204`.
 Members now use one persisted accent across avatars, author names, known chat
 mentions, working indicators, channel previews, mobile status, and board
 assignments. The accessible palette expands to six agent colours; every text
@@ -369,6 +370,46 @@ failed-restart rollback, successful health/Tailscale continuity, full
 
 Completion: publish a SHA-pinned fork release, prove rollback on a copied
 production database, then cut over only while every production agent is idle.
+
+WP8 result (2026-08-07): implementation and local Windows verification
+complete; binding CI, release publication, the real project workflow, and
+production cutover remain pending. The owner-only Settings action and
+`codor update` use one updater path. It accepts only a GitHub Release pinned to
+an exact commit, verifies the package against `SHA256SUMS`, stages it outside
+the running runtime, rechecks every room for active/queued/awaiting work, and
+takes a transactionally consistent SQLite snapshot. A separate one-shot
+Scheduled Task stops the service, terminates the exact loopback listener,
+swaps the runtime, restarts, and either commits after health or restores both
+the prior runtime and database.
+
+Verification evidence so far:
+
+- Protocol dependencies, Switchboard, CLI, and Web production builds passed.
+  Focused updater, artifact, store, and server coverage passed 213/213 tests
+  with two existing platform skips; the focused Settings browser journey
+  passed 6/6 including the idle-only update action and accessibility in both
+  themes.
+- A first isolated Windows trial exposed that `schtasks /End` could leave the
+  Node listener alive and falsely satisfy health. The helper now terminates the
+  process owning its exact loopback port and requires the old health endpoint
+  to disappear before moving any runtime.
+- The corrected trial ran under separate one-shot tasks on port 8138. An
+  intentionally broken candidate failed health, restored the previous runtime,
+  reopened the old endpoint, removed its lock, and restored a current snapshot
+  of the production SQLite database byte-for-byte. Both restored and backup
+  SHA-256 were
+  `520AC44BD4B5C5339059DC7205DB3C6D21130C09B0E10CDFACD1B1C12D65EFDB`.
+- A healthy candidate then swapped successfully on port 8138, returned the new
+  runtime identity, preserved the database hash, removed the rollback runtime
+  and update lock, and deleted its one-shot update task. The isolated service
+  task was removed and port 8138 was closed after the proof.
+- The local fork artifact staged as `@richhardry/codor@0.10.11` with repository
+  identity `https://github.com/truthunknown2-art/codor`, a complete CLI, and
+  bundled web assets. The fork release workflow skips upstream npm publication,
+  preserves the full release gate, and creates an exact-SHA GitHub Release.
+- Production port 8137 remained HTTP 200 throughout. Its service, runtime,
+  live database, rooms, and agents were not stopped or modified; the database
+  was opened read-only only to create the isolated acceptance snapshot.
 
 ## Execution rules
 

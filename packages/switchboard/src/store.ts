@@ -1481,6 +1481,11 @@ export class Store {
     this.db.close();
   }
 
+  /** Write a transactionally consistent standalone copy while the live WAL database stays open. */
+  backup(path: string): void {
+    this.db.exec(`VACUUM INTO '${path.replaceAll("'", "''")}'`);
+  }
+
   // harn:assume changelog-covers-every-visible-entity ref=changelog-append
   /**
    * Allocates the room's next seq and appends one change row — called by

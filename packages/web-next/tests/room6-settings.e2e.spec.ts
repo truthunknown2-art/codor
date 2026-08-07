@@ -49,6 +49,24 @@ test.describe('brakes', () => {
   });
 });
 
+test.describe('updates', () => {
+  test('starts only from an idle Windows host', async ({ page }) => {
+    let started = false;
+    await page.route('**/api/update', async (route) => {
+      if (route.request().method() === 'POST') {
+        started = true;
+        await route.fulfill({ json: { accepted: true, version: '0.11.0', sha: 'a'.repeat(40), tag: 'v0.11.0' } });
+        return;
+      }
+      await route.fulfill({ json: { supported: true, current_version: '0.10.10', state: 'idle', blockers: [] } });
+    });
+    await openSettings(page);
+    await page.getByTestId('update-when-idle').click();
+    await expect(page.getByTestId('update-message')).toContainText('Updating to 0.11.0');
+    expect(started).toBe(true);
+  });
+});
+
 test.describe('devices', () => {
   test('the list renders and a pairing offer shows QR plus code', async ({ page }) => {
     await openSettings(page);

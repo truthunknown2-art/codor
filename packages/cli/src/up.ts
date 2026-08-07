@@ -24,6 +24,7 @@ import {
 } from '@codor/switchboard';
 
 import { tryResolveRuntimePaths } from './runtime-paths.js';
+import { createWindowsUpdateController } from './updater.js';
 
 // harn:assume adapter-registry-sole-harness-source ref=registry-cli-composition
 export interface UpOptions {
@@ -206,6 +207,11 @@ export async function startCodor(options: UpOptions): Promise<RunningCodor> {
       // harn:assume voice-provider-selection-is-operator-config ref=voice-selection-up-option
       voiceProvider: options.voiceProvider,
       // harn:end voice-provider-selection-is-operator-config
+      update: createWindowsUpdateController({
+        daemon,
+        dataDir,
+        endpoint: `http://127.0.0.1:${String(options.port ?? 8137)}`,
+      }),
     });
     // harn:end browser-protocol-epoch-blocks-only-stale-browser-ui
     relayLink = new RelayLink({

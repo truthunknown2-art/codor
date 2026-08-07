@@ -109,6 +109,14 @@ export interface PushConfig {
   vapid_public_key?: string;
 }
 
+export interface UpdateStatus {
+  supported: boolean;
+  current_version: string;
+  current_sha?: string;
+  state: 'idle' | 'preparing';
+  blockers: { room: string; kind: string; id: string; label?: string; state: string }[];
+}
+
 export interface PairingOffer {
   endpoint: string;
   pairing_token: string;
@@ -197,6 +205,14 @@ export async function refreshUsage(options: ApiOptions): Promise<{ outcome: Usag
   return sendJson<{ outcome: UsageRefreshOutcome }>('/api/usage/refresh', 'POST', undefined, options);
 }
 // harn:end model-catalogs-reach-a-browser-that-arrives-early
+
+export async function fetchUpdateStatus(options: ApiOptions): Promise<UpdateStatus> {
+  return fetchJson<UpdateStatus>('/api/update', options);
+}
+
+export async function startUpdate(options: ApiOptions): Promise<{ accepted: true; version: string; sha: string; tag: string }> {
+  return sendJson('/api/update', 'POST', {}, options);
+}
 
 export async function fetchRooms(options: ApiOptions): Promise<Room[]> {
   const body = await fetchJson<{ rooms: Room[] }>('/api/rooms', options);

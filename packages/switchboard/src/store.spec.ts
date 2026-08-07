@@ -141,6 +141,17 @@ describe('queued delivery consumption', () => {
 });
 // harn:end live-delivery-consumption-is-idempotent
 
+describe('backup', () => {
+  it('writes a standalone snapshot while the WAL store remains open', () => {
+    openRoom(store);
+    const path = join(dir, 'backup.sqlite');
+    store.backup(path);
+    const backup = new Store(path);
+    expect(backup.getRoom('eng')?.name).toBe('Engineering');
+    backup.close();
+  });
+});
+
 afterEach(() => {
   store.close();
   rmSync(dir, { recursive: true, force: true });

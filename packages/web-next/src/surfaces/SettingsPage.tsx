@@ -1,16 +1,19 @@
-import { ArrowLeft, Monitor, Moon, QrCode, ShieldCheck, Sun, Trash2 } from 'lucide-react';
+import { ArrowLeft, Monitor, Moon, QrCode, RefreshCw, ShieldCheck, Sun, Trash2 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   fetchDevices,
+  fetchUpdateStatus,
   fetchRelayStatus,
   fetchPushConfig,
   mintPairingOffer,
   revokeDevice,
+  startUpdate,
   type DeviceSummary,
   type PairingOffer,
   type PushConfig,
+  type UpdateStatus,
 } from '@runtime/api.js';
 import { currentBrowserAccessToken, ensureBrowserIdentity, forgetRelayPairing, unpairBrowser } from '@runtime/crypto.js';
 import { relayActive } from '@runtime/relay-mode.js';
@@ -78,6 +81,7 @@ export function SettingsPage(props: {
           <h1>Settings</h1>
         </header>
         <AppearanceSection />
+        <UpdateSection token={token} />
         <NotificationsSection token={token} />
         <BrakesSection connection={connection} />
         <DevicesSection token={token} />
@@ -88,6 +92,47 @@ export function SettingsPage(props: {
 }
 
 // ── Appearance ─────────────────────────────────────────────────────────────
+
+function UpdateSection(props: { token: () => string }) {
+  const [status, setStatus] = useState<UpdateStatus>();
+  const [message, setMessage] = useState<string>();
+  useEffect(() => {
+    void fetchUpdateStatus({ token: props.token() })
+      .then(setStatus)
+      .catch(() => setMessage('Couldn’t check for updates.'));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const blocked = (status?.blockers.length ?? 0) > 0;
+  const disabled = status === undefined || !status.supported || status.state === 'preparing' || blocked;
+  return (
+    <section className="nx-settings-card" aria-labelledby="s-update">
+      <h2 id="s-update">Updates</h2>
+      <p className="nx-settings-sub">
+        {status === undefined
+          ? 'Checking this Codor host…'
+          : `TruthUnknown Codor ${status.current_version}${status.current_sha ? ` · ${status.current_sha.slice(0, 12)}` : ''}`}
+      </p>
+      {status !== undefined && !status.supported && <p className="nx-field-note">Safe in-app updates are available on Windows installs.</p>}
+      {blocked && <p className="nx-field-note" data-testid="update-blocked">Wait for {status!.blockers.length} active or queued item{status!.blockers.length === 1 ? '' : 's'} to settle.</p>}
+      {message !== undefined && <p className="nx-field-note" data-testid="update-message">{message}</p>}
+      <div className="nx-settings-actions">
+        <Button
+          variant="secondary"
+          disabled={disabled}
+          data-testid="update-when-idle"
+          onClick={() => {
+            setMessage('Preparing the verified release…');
+            void startUpdate({ token: props.token() })
+              .then((result) => setMessage(`Updating to ${result.version}. Codor will reconnect after its health check.`))
+              .catch((error: unknown) => setMessage(error instanceof Error ? error.message : 'Update failed to start.'));
+          }}
+        >
+          <RefreshCw size={15} aria-hidden="true" /> {status?.state === 'preparing' ? 'Update preparing…' : 'Update when idle'}
+        </Button>
+      </div>
+    </section>
+  );
+}
 
 function AppearanceSection() {
   const [theme, setTheme] = useState<ThemeChoice>(readThemeChoice);

@@ -113,6 +113,33 @@ export interface ServerOptions {
   voiceTimeoutMs?: number;
   /** Test-only hostname seam; production uses node:os. */
   systemHostname?: string;
+  /** Host-owned updater; omitted on runtimes that cannot safely replace themselves. */
+  update?: UpdateController;
+}
+
+export interface UpdateBlocker {
+  room: string;
+  kind: 'member' | 'delivery' | 'interaction';
+  id: string;
+  label?: string;
+  state: string;
+}
+
+export interface UpdateStatus {
+  supported: boolean;
+  current_version: string;
+  current_sha?: string;
+  state: 'idle' | 'preparing';
+  blockers: UpdateBlocker[];
+}
+
+export type UpdateStartResult =
+  | { accepted: true; version: string; sha: string; tag: string }
+  | { accepted: false; status_code: number; error: string; status: UpdateStatus };
+
+export interface UpdateController {
+  status(): Promise<UpdateStatus>;
+  start(tag?: string): Promise<UpdateStartResult>;
 }
 
 export interface RunningServer {
@@ -761,6 +788,25 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     void reply.send(await daemon.refreshUsageLimits());
   });
   // harn:end account-usage-limits-are-probed-periodically-and-honestly-refreshable
+
+  app.get('/api/update', async (req, reply) => {
+    const principal = authed(req, reply);
+    if (!principal || !authorizeGlobal(principal, 'manage_agents', reply)) return;
+    if (options.update === undefined) {
+      return reply.send({ supported: false, current_version: 'unknown', state: 'idle', blockers: [] });
+    }
+    return reply.send(await options.update.status());
+  });
+
+  app.post('/api/update', async (req, reply) => {
+    const principal = authed(req, reply);
+    if (!principal || !authorizeGlobal(principal, 'manage_agents', reply)) return;
+    if (options.update === undefined) return reply.code(501).send({ error: 'safe updater unavailable on this host' });
+    const body = (req.body ?? {}) as { tag?: unknown };
+    if (body.tag !== undefined && typeof body.tag !== 'string') return reply.code(400).send({ error: 'tag must be a string' });
+    const result = await options.update.start(body.tag);
+    return result.accepted ? reply.code(202).send(result) : reply.code(result.status_code).send(result);
+  });
 
   // harn:assume local-directory-listing-home-contained ref=local-dirs-rest-boundary
   app.get('/api/local/dirs', (req, reply) => {
