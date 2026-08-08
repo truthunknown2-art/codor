@@ -1,6 +1,6 @@
 # Milestone 1: Production team workflow
 
-Status: approved; Work Packages 1-7 complete; Work Package 8 implementation and local Windows verification complete; binding CI, release, integration gate, and cutover pending
+Status: complete; Work Packages 1-8, integration acceptance, release, and production cutover complete
 Upstream baseline: `rjx18/codor@3b587c75cc02a9580ffbdaaafc217fc4d12d8cf5`
 Fork: `truthunknown2-art/codor`
 Production boundary: port `8137` and `C:\Users\pbirc\.codor` must remain untouched until final acceptance.
@@ -371,9 +371,8 @@ failed-restart rollback, successful health/Tailscale continuity, full
 Completion: publish a SHA-pinned fork release, prove rollback on a copied
 production database, then cut over only while every production agent is idle.
 
-WP8 result (2026-08-07): implementation and local Windows verification
-complete; binding CI, release publication, the real project workflow, and
-production cutover remain pending. The owner-only Settings action and
+WP8 result (2026-08-07): complete and merged in PR #9 at
+`dbb9893f9c6461eaa36a4820eda8dadfb9d5dd20`. The owner-only Settings action and
 `codor update` use one updater path. It accepts only a GitHub Release pinned to
 an exact commit, verifies the package against `SHA256SUMS`, stages it outside
 the running runtime, rechecks every room for active/queued/awaiting work, and
@@ -382,7 +381,7 @@ Scheduled Task stops the service, terminates the exact loopback listener,
 swaps the runtime, restarts, and either commits after health or restores both
 the prior runtime and database.
 
-Verification evidence so far:
+Verification and release evidence:
 
 - Protocol dependencies, Switchboard, CLI, and Web production builds passed.
   Focused updater, artifact, store, and server coverage passed 213/213 tests
@@ -407,9 +406,52 @@ Verification evidence so far:
   identity `https://github.com/truthunknown2-art/codor`, a complete CLI, and
   bundled web assets. The fork release workflow skips upstream npm publication,
   preserves the full release gate, and creates an exact-SHA GitHub Release.
-- Production port 8137 remained HTTP 200 throughout. Its service, runtime,
-  live database, rooms, and agents were not stopped or modified; the database
-  was opened read-only only to create the isolated acceptance snapshot.
+- Binding Ubuntu CI run `31215999189` passed at PR head
+  `4aaa4007ef30731e89b13f172f23cb6997ca9c8c`; exact-merge CI run
+  `31217510460` passed at
+  `dbb9893f9c6461eaa36a4820eda8dadfb9d5dd20`. Release run `31218527401`
+  passed at that same merge SHA.
+- Public release `v0.10.11` targets that exact merge SHA. Its TGZ SHA-256 is
+  `d0ebbfaf486eb32d2e272b63b7eb540b344e4278c867133ada5887968e6f599c`;
+  its VSIX SHA-256 is
+  `a18ea728e4fa4d2ffa2e48706de26a159182768a82fef23a9bd83954cc684844`.
+
+Integration and production acceptance:
+
+- The deterministic guarded-project integration suite covers exactly-once
+  dispatch across restart, worker completion without a mention, a rejected
+  revision and redispatch, review/test barriers, dependency unlocking,
+  coordinator return, the one-nudge latch, brakes, failure blocking, and a
+  bounded replacement recovery brief. Browser suites cover team-profile
+  channel creation, desktop/mobile board access, identity colours, and the
+  idle-only Settings update action. These checks ran in the binding Ubuntu gate
+  rather than spending live provider turns or creating a synthetic production
+  project beside the owner's active rooms.
+- The updater waited until a read-only query over every room found no agent in
+  `running`, `queued`, `awaiting_input`, or uncertain custody; no queued or
+  delivering delivery; and no unresolved interaction. It then took the
+  transactionally consistent backup
+  `C:\Users\pbirc\.codor\maintenance\switchboard-dbb9893f9c6461eaa36a4820eda8dadfb9d5dd20.sqlite`.
+  SQLite integrity was `ok`; backup SHA-256 was
+  `0AFBAE117A030AE31585C3DF0F5DF107DA6D242ADA4FC13B7A6CA31F26C83FB3`.
+- The one-shot Windows task replaced upstream `0.10.10` with fork `0.10.11`,
+  health-checked it, removed its lock, staging and rollback directories, and
+  deleted itself. `Codor Switchboard` resumed in Running state on port 8137;
+  the live database quick-check remained `ok`.
+- Post-cutover inventory retained all three rooms (Desk, Araeyas Laptop, and
+  TruthForge) and all 19 members, with zero pending deliveries or interactions.
+  The installed package reports repository
+  `https://github.com/truthunknown2-art/codor` and version `0.10.11`.
+- Localhost returned HTTP 200. Tailscale remained online, its Serve route still
+  targeted port 8137, and the HTTPS tailnet endpoint returned HTTP 200. The
+  already-paired Android browser remains recorded in Devices.
+- A fresh production-browser load exposed the prominent Board action and its
+  canonical project form, the optional Team profile selector during channel
+  creation, and Settings text `TruthUnknown Codor 0.10.11` with `Update when
+  idle`. The inspection cancelled all forms without changing an existing room.
+
+Milestone 1 is accepted. Existing rooms remain opt-in and unchanged; no
+synthetic live-agent acceptance room or project-repository mutation was needed.
 
 ## Execution rules
 
@@ -419,8 +461,8 @@ Verification evidence so far:
   status, and next action.
 - Keep the previous completed package passing; do not advertise incomplete
   capabilities.
-- After WP8 is review-clean, perform a separate integration review and the full
-  acceptance gate before production cutover.
+- The completed integration record above is the milestone acceptance source of
+  truth; future work starts in a new milestone and must keep it passing.
 
 ## Explicit exclusions
 
