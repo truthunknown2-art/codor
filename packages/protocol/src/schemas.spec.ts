@@ -28,6 +28,7 @@ import {
   PendingInteractionSchema,
   ProjectDocumentSchema,
   ProjectMutationSchema,
+  ProjectSteeringProposalSchema,
   PolicySchema, PostFrameSchema, VoiceNoteSchema,
   ReasoningSummaryPayloadSchema,
   RoomIdSchema,
@@ -60,6 +61,21 @@ describe('project and team profile documents', () => {
     expect(ProjectMutationSchema.safeParse({
       op: 'submit', task_id: 't1', evidence: [],
     }).success).toBe(false);
+  });
+
+  it('accepts a bounded handle-based Pro steering proposal', () => {
+    const proposal = {
+      format: 'codor.pro-steering.v1', proposal_version: 1, based_on_board_version: 4,
+      milestones: [{ id: 'm1', title: 'Build' }],
+      tasks: [{
+        id: 't1', milestone_id: 'm1', title: 'Implement', description: 'Make the change',
+        acceptance_criteria: ['Focused tests pass'], dependencies: [], assignee: 'coder',
+        gatekeepers: ['reviewer'], workspace_mode: 'write',
+      }],
+    } as const;
+    expect(ProjectSteeringProposalSchema.safeParse(proposal).success).toBe(true);
+    expect(ProjectSteeringProposalSchema.safeParse({ ...proposal, format: 'anything' }).success).toBe(false);
+    expect(ProjectSteeringProposalSchema.safeParse({ ...proposal, tasks: [...proposal.tasks, proposal.tasks[0]] }).success).toBe(false);
   });
 
   it('accepts bounded durable state and rejects dangling project references', () => {
