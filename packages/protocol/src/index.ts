@@ -12,5 +12,6 @@ export * from './events.js';
 export * from './adapter.js';
 export * from './voice.js';
 export * from './project.js';
+export * from './project-bridge.js';
 export * from './profile.js';
 export * from './ws.js';

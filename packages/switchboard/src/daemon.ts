@@ -1905,6 +1905,7 @@ export class Daemon {
       coordinator: project.coordinator,
       guarded_autopilot: project.coordinator === member.id ? false : project.guarded_autopilot,
       ...(project.continuation && { continuation: project.continuation }),
+      ...(project.steering && { steering: project.steering }),
       milestones: project.milestones,
       tasks,
     }, project.version);
@@ -2146,6 +2147,7 @@ export class Daemon {
         coordinator: project.coordinator === memberId ? replaced.replacement.id : project.coordinator,
         guarded_autopilot: project.guarded_autopilot,
         ...(project.continuation && { continuation: project.continuation }),
+        ...(project.steering && { steering: project.steering }),
         milestones: project.milestones,
         tasks,
       }, project.version);

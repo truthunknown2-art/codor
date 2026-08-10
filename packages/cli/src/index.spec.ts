@@ -170,7 +170,7 @@ describe('@codor/cli', () => {
     ]);
     const program = createProgram();
     expect(program.commands.find((command) => command.name() === 'project')?.commands.map((command) => command.name()))
-      .toEqual(['show', 'init', 'add', 'assign', 'block', 'submit', 'review', 'close']);
+      .toEqual(['show', 'export', 'import', 'init', 'add', 'assign', 'block', 'submit', 'review', 'close']);
     expect(program.commands.find((command) => command.name() === 'spawn')?.options.map((option) => option.long))
       .toContain('--channel');
     expect(program.commands.flatMap((command) => command.options.map((option) => option.long)))

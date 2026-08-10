@@ -129,4 +129,51 @@ describe('canonical project mutations', () => {
       op: 'set_status', expected_version: 3, status: 'completed',
     }).status).toBe('completed');
   });
+
+  it('atomically reconciles fresh steering while protecting active work', () => {
+    let project = initialized();
+    project = mutate(project, PLANNER, { op: 'add_milestone', expected_version: 1, id: 'm1', title: 'Build' });
+    project = mutate(project, PLANNER, {
+      op: 'add_task', expected_version: 2, id: 't1', milestone_id: 'm1', title: 'First', description: 'Before',
+      acceptance_criteria: ['Old'], dependencies: [], assignee: CODER,
+      gatekeepers: [REVIEWER], workspace_mode: 'write',
+    });
+    project = mutate(project, PLANNER, {
+      op: 'reconcile_plan', expected_version: 3, proposal_version: 1, summary: 'Pro review',
+      source_commit: 'a'.repeat(40),
+      milestones: [{ id: 'm1', title: 'Build' }, { id: 'm2', title: 'Finish' }],
+      tasks: [{
+        id: 't1', milestone_id: 'm1', title: 'First corrected', description: 'After',
+        acceptance_criteria: ['New'], dependencies: [], assignee: CODER,
+        gatekeepers: [REVIEWER], workspace_mode: 'write',
+      }, {
+        id: 't2', milestone_id: 'm2', title: 'Second', description: 'Next',
+        acceptance_criteria: ['Done'], dependencies: ['t1'],
+        gatekeepers: [], workspace_mode: 'read_only',
+      }],
+    });
+    expect(project.steering).toMatchObject({ proposal_version: 1, based_on_board_version: 3, summary: 'Pro review' });
+    expect(project.tasks).toMatchObject([
+      { id: 't1', title: 'First corrected', status: 'ready' },
+      { id: 't2', status: 'backlog' },
+    ]);
+    expect(() => mutate(project, PLANNER, {
+      op: 'reconcile_plan', expected_version: 4, proposal_version: 1, milestones: [], tasks: [],
+    })).toThrow('already applied or superseded');
+
+    project = mutate(project, CODER, {
+      op: 'submit', expected_version: 4, task_id: 't1', evidence: [{ type: 'note', text: 'ready for review' }],
+    });
+    expect(() => mutate(project, PLANNER, {
+      op: 'reconcile_plan', expected_version: 5, proposal_version: 2, milestones: [{ id: 'm1', title: 'Build' }],
+      tasks: [{
+        id: 't1', milestone_id: 'm1', title: 'Rewrite active work', description: 'Unsafe',
+        acceptance_criteria: ['Changed'], dependencies: [], assignee: CODER,
+        gatekeepers: [REVIEWER], workspace_mode: 'write',
+      }],
+    })).toThrow('cannot edit in_review task t1');
+    expect(() => mutate(project, PLANNER, {
+      op: 'reconcile_plan', expected_version: 4, proposal_version: 2, milestones: [], tasks: [],
+    })).toThrow('version conflict');
+  });
 });

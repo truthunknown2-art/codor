@@ -47,6 +47,16 @@ function taskFor(project: ProjectDocument, id: string): ProjectTask {
   return task;
 }
 
+const samePlan = (left: ProjectTask, right: ProjectTask): boolean =>
+  left.milestone_id === right.milestone_id
+  && left.title === right.title
+  && left.description === right.description
+  && JSON.stringify(left.acceptance_criteria) === JSON.stringify(right.acceptance_criteria)
+  && JSON.stringify(left.dependencies) === JSON.stringify(right.dependencies)
+  && left.assignee === right.assignee
+  && JSON.stringify(left.gatekeepers) === JSON.stringify(right.gatekeepers)
+  && left.workspace_mode === right.workspace_mode;
+
 function validateEvidence(context: ProjectMutationContext, task: ProjectTask): void {
   for (const evidence of task.evidence) {
     if (evidence.type === 'message' && !context.messageExists(evidence.message_id)) {
@@ -143,6 +153,7 @@ export function applyProjectMutation(
     status: project.status,
     coordinator: project.coordinator,
     guarded_autopilot: project.guarded_autopilot,
+    ...(project.steering && { steering: project.steering }),
     milestones: project.milestones,
     tasks: project.tasks,
   };
@@ -258,6 +269,57 @@ export function applyProjectMutation(
   } else if (mutation.op === 'set_autopilot') {
     requireCoordinator(project, actor);
     next = { ...next, guarded_autopilot: mutation.enabled };
+  } else if (mutation.op === 'reconcile_plan') {
+    requireCoordinator(project, actor);
+    if ((project.steering?.proposal_version ?? 0) >= mutation.proposal_version) {
+      throw new Error(`steering proposal ${mutation.proposal_version} was already applied or superseded`);
+    }
+    const milestones = [...project.milestones];
+    for (const proposed of mutation.milestones) {
+      const index = milestones.findIndex((milestone) => milestone.id === proposed.id);
+      if (index < 0) {
+        milestones.push({ ...proposed, order: milestones.length, status: 'backlog' });
+      } else if (milestones[index]!.title !== proposed.title) {
+        if (milestones[index]!.status !== 'backlog') {
+          throw new Error(`steering cannot edit active or completed milestone ${proposed.id}`);
+        }
+        milestones[index] = { ...milestones[index]!, title: proposed.title };
+      }
+    }
+    const tasks = [...project.tasks];
+    for (const proposed of mutation.tasks) {
+      const candidate: ProjectTask = {
+        ...proposed,
+        status: 'backlog',
+        revision: 0,
+        evidence: [],
+        reviews: [],
+      };
+      const index = tasks.findIndex((task) => task.id === proposed.id);
+      if (index < 0) {
+        tasks.push(candidate);
+      } else if (!samePlan(tasks[index]!, candidate)) {
+        if (!['backlog', 'ready'].includes(tasks[index]!.status)) {
+          throw new Error(`steering cannot edit ${tasks[index]!.status} task ${proposed.id}`);
+        }
+        tasks[index] = {
+          ...tasks[index]!,
+          ...proposed,
+        };
+      }
+    }
+    next = {
+      ...next,
+      milestones,
+      tasks,
+      steering: {
+        proposal_version: mutation.proposal_version,
+        based_on_board_version: mutation.expected_version,
+        ...(mutation.source_commit && { source_commit: mutation.source_commit }),
+        ...(mutation.summary && { summary: mutation.summary }),
+        applied_ts: new Date().toISOString(),
+      },
+    };
   }
 
   next = refresh(next);
@@ -279,6 +341,7 @@ export function replaceProjectTasks(
     status: project.status,
     coordinator: project.coordinator,
     guarded_autopilot: project.guarded_autopilot,
+    ...(project.steering && { steering: project.steering }),
     ...(continuation && { continuation }),
     milestones: project.milestones,
     tasks,

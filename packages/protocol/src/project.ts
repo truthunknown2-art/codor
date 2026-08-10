@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { MemberIdSchema, MessageIdSchema, RoomIdSchema, TimestampSchema } from './ids.js';
+import { AssignableHandleSchema } from './member.js';
 
 const boundedText = (max: number): z.ZodString => z.string().trim().min(1).max(max);
 const unique = <T>(items: T[]): boolean => new Set(items).size === items.length;
@@ -108,6 +109,47 @@ export const ProjectTaskSchema = z.object({
 });
 export type ProjectTask = z.infer<typeof ProjectTaskSchema>;
 
+const ProjectPlanMilestoneSchema = z.object({
+  id: boundedText(128),
+  title: boundedText(300),
+}).strict();
+
+const projectPlanTaskShape = {
+  id: boundedText(128),
+  milestone_id: boundedText(128),
+  title: boundedText(300),
+  description: boundedText(10_000),
+  acceptance_criteria: z.array(boundedText(1_000)).min(1).max(50),
+  dependencies: z.array(boundedText(128)).max(50).refine(unique, 'task dependencies must be unique'),
+  workspace_mode: ProjectWorkspaceModeSchema,
+};
+
+export const ProjectSteeringProposalSchema = z.object({
+  format: z.literal('codor.pro-steering.v1'),
+  proposal_version: z.number().int().positive(),
+  based_on_board_version: z.number().int().positive(),
+  source_commit: z.string().regex(/^[0-9a-f]{40}$/).optional(),
+  summary: boundedText(2_000).optional(),
+  milestones: z.array(ProjectPlanMilestoneSchema).max(100),
+  tasks: z.array(z.object({
+    ...projectPlanTaskShape,
+    assignee: AssignableHandleSchema.optional(),
+    gatekeepers: z.array(AssignableHandleSchema).max(50).refine(unique, 'task gatekeepers must be unique'),
+  }).strict()).max(500),
+}).strict().superRefine((proposal, ctx) => {
+  const milestoneIds = proposal.milestones.map((milestone) => milestone.id);
+  const taskIds = proposal.tasks.map((task) => task.id);
+  if (!unique(milestoneIds)) ctx.addIssue({ code: 'custom', path: ['milestones'], message: 'milestone ids must be unique' });
+  if (!unique(taskIds)) ctx.addIssue({ code: 'custom', path: ['tasks'], message: 'task ids must be unique' });
+});
+export type ProjectSteeringProposal = z.infer<typeof ProjectSteeringProposalSchema>;
+
+const ProjectReconcileTaskSchema = z.object({
+  ...projectPlanTaskShape,
+  assignee: MemberIdSchema.optional(),
+  gatekeepers: z.array(MemberIdSchema).max(50).refine(unique, 'task gatekeepers must be unique'),
+}).strict();
+
 export const ProjectDocumentSchema = z.object({
   room: RoomIdSchema,
   title: boundedText(300),
@@ -118,6 +160,13 @@ export const ProjectDocumentSchema = z.object({
   continuation: z.object({
     delivery_id: boundedText(128),
     project_version: z.number().int().positive(),
+  }).strict().optional(),
+  steering: z.object({
+    proposal_version: z.number().int().positive(),
+    based_on_board_version: z.number().int().positive(),
+    source_commit: z.string().regex(/^[0-9a-f]{40}$/).optional(),
+    summary: boundedText(2_000).optional(),
+    applied_ts: TimestampSchema,
   }).strict().optional(),
   milestones: z.array(ProjectMilestoneSchema).max(100),
   tasks: z.array(ProjectTaskSchema).max(500),
@@ -212,5 +261,14 @@ export const ProjectMutationSchema = z.discriminatedUnion('op', [
   }).strict(),
   z.object({ ...mutationBase, op: z.literal('set_status'), status: ProjectStatusSchema }).strict(),
   z.object({ ...mutationBase, op: z.literal('set_autopilot'), enabled: z.boolean() }).strict(),
+  z.object({
+    ...mutationBase,
+    op: z.literal('reconcile_plan'),
+    proposal_version: z.number().int().positive(),
+    source_commit: z.string().regex(/^[0-9a-f]{40}$/).optional(),
+    summary: boundedText(2_000).optional(),
+    milestones: z.array(ProjectPlanMilestoneSchema).max(100),
+    tasks: z.array(ProjectReconcileTaskSchema).max(500),
+  }).strict(),
 ]);
 export type ProjectMutation = z.infer<typeof ProjectMutationSchema>;
