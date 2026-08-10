@@ -1,11 +1,14 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 import {
   MemberStatusResponseSchema,
   MessageSchema,
+  ProjectSteeringProposalSchema,
   RunSearchHitSchema,
+  projectBoardSnapshot,
+  projectSteeringMutation,
   type AttachLease,
   type Delivery,
   type Member,
@@ -578,6 +581,47 @@ export function createProgram(context: CliContext = {}): Command {
       await withClient(async (client) => {
         const snapshot = await syncRoom(client, options.channel);
         out(JSON.stringify(snapshot.project ?? null, null, 2));
+      });
+    });
+  project
+    .command('export')
+    .description('export a credential-free Board packet and editable Pro steering template')
+    .requiredOption('-r, --channel <channel>', 'channel id')
+    .option('-o, --output <file>', 'write JSON to this file instead of stdout')
+    .action(async (options: ChannelOptions & { output?: string }) => {
+      await withClient(async (client) => {
+        const snapshot = await syncRoom(client, options.channel);
+        if (!snapshot.project) throw new Error('project is not initialized');
+        const packet = projectBoardSnapshot(snapshot.project, [...snapshot.members.values()]);
+        const json = `${JSON.stringify(packet, null, 2)}\n`;
+        if (!options.output) {
+          out(json.trimEnd());
+          return;
+        }
+        const path = resolve(options.output);
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, json, 'utf8');
+        out(path);
+      });
+    });
+  project
+    .command('import')
+    .description('atomically reconcile a codor.pro-steering.v1 JSON proposal')
+    .argument('<file>', 'proposal JSON file')
+    .requiredOption('-r, --channel <channel>', 'channel id')
+    .action(async (file: string, options: ChannelOptions) => {
+      let proposal: ReturnType<typeof ProjectSteeringProposalSchema.parse>;
+      try {
+        proposal = ProjectSteeringProposalSchema.parse(JSON.parse(readFileSync(resolve(file), 'utf8')));
+      } catch (error) {
+        throw new Error(`invalid Pro steering proposal: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      await withClient(async (client) => {
+        const snapshot = await syncRoom(client, options.channel);
+        if (!snapshot.project) throw new Error('project is not initialized');
+        const mutation = projectSteeringMutation(proposal, [...snapshot.members.values()]);
+        const saved = await mutateProject(client, options.channel, mutation);
+        out(`steering ${proposal.proposal_version}\tboard v${saved.version}\t${saved.tasks.length} task(s)`);
       });
     });
   project

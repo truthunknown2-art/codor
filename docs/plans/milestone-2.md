@@ -70,6 +70,17 @@ tests for copy/download and import.
 Completion: a Pro-ready snapshot can be exported and a proposal can be safely
 previewed/applied from desktop, mobile, or CLI.
 
+WP2 result (2026-08-10): complete. `codor project export` now emits or writes a
+deterministic credential-free packet containing the live Board, member handles,
+evidence, and a ready-to-edit steering template. `codor project import` parses
+that template, resolves current handles, and sends the same atomic mutation used
+by the Board's new Pro steering panel. The responsive Board supports copying the
+packet, validating a pasted proposal, and applying it with stale-version
+feedback. Shared bridge tests passed 2/2, the full protocol schema file passed
+200/200, CLI/web/switchboard dependency builds passed, and the focused desktop,
+reload, and 320px mobile Board browser test passed 1/1 on isolated ports
+38137-38140.
+
 ### WP3 - Release and TruthForge acceptance
 
 Primary invariant: cutover preserves every existing room, member, delivery,

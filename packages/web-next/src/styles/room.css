@@ -306,6 +306,10 @@
 .nx-project-task pre { max-height: 180px; overflow: auto; white-space: pre-wrap; font: var(--t-mono-small); }
 .nx-project-check { width: 24px; height: 24px; display: grid !important; place-items: center; border-radius: var(--r-full); background: var(--c-muted); color: var(--c-secondary) !important; }
 .nx-project-task.is-done .nx-project-check { background: var(--c-live-tint); color: var(--c-live-text) !important; }
+.nx-project-steering { padding: var(--sp-3); border: 1px solid var(--c-line); border-radius: var(--r-card); background: var(--c-raised); }
+.nx-project-steering > summary { cursor: pointer; font-weight: 700; }
+.nx-project-steering label { display: grid; gap: var(--sp-1); margin-top: var(--sp-3); color: var(--c-secondary); font: var(--t-caption-strong); }
+.nx-project-steering textarea { width: 100%; margin-top: var(--sp-2); padding: var(--sp-2); border: 1px solid var(--c-line-strong); border-radius: var(--r-control); resize: vertical; background: var(--c-surface); color: var(--c-ink); font: var(--t-mono-small); }
 .nx-project-inline { margin-top: var(--sp-3); }
 .nx-project-inline input, .nx-project-inline select { flex: 1; min-width: 140px; }
 .nx-project-form, .nx-project-compose form { display: grid; gap: var(--sp-3); }

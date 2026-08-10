@@ -35,6 +35,16 @@ test('the canonical board survives reload and completes gated work on desktop an
 
   const card = board.getByTestId('project-task-t1');
   await expect(card).toContainText('ready');
+  await board.getByText('Pro steering bridge').click();
+  const packet = JSON.parse(await board.getByLabel('Board packet for Pro').inputValue());
+  packet.pro_steering_template.summary = 'Pro tightened the first task';
+  packet.pro_steering_template.tasks[0].title = 'Build Board bridge';
+  await board.getByTestId('pro-steering-input').fill(JSON.stringify(packet.pro_steering_template));
+  await board.getByRole('button', { name: 'Preview' }).click();
+  await expect(board.getByRole('status')).toContainText('Valid proposal 1');
+  await board.getByRole('button', { name: 'Apply atomically' }).click();
+  await expect(card).toContainText('Build Board bridge');
+
   await card.getByPlaceholder('Evidence or blocking note').fill('Verified in the browser');
   await card.getByRole('button', { name: 'Submit' }).click();
   await expect(card).toContainText('in review');

@@ -1,4 +1,11 @@
-import type { Member, ProjectMutation, ProjectTask } from '@codor/protocol';
+import {
+  ProjectSteeringProposalSchema,
+  projectBoardSnapshot,
+  projectSteeringMutation,
+  type Member,
+  type ProjectMutation,
+  type ProjectTask,
+} from '@codor/protocol';
 import { Check, Plus, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
@@ -97,6 +104,12 @@ function ProjectView(props: {
           <button className="nx-btn is-primary" disabled={!complete} onClick={() => props.mutate({ op: 'set_status', status: 'completed' })}>Complete project</button>
         </div>
       )}
+      <ProjectSteeringBridge
+        project={props.project}
+        members={props.members}
+        canCoordinate={canCoordinate}
+        mutate={props.mutate}
+      />
       <div className="nx-project-board">
         {props.project.milestones.map((milestone) => (
           <section className="nx-project-milestone" key={milestone.id}>
@@ -123,6 +136,74 @@ function ProjectView(props: {
         <ProjectComposer project={props.project} members={props.members} mutate={props.mutate} />
       )}
     </>
+  );
+}
+
+function ProjectSteeringBridge(props: {
+  project: NonNullable<ReturnType<typeof roomSlice>['project']>;
+  members: Member[];
+  canCoordinate: boolean;
+  mutate(mutation: PendingMutation): void;
+}) {
+  const [proposalText, setProposalText] = useState('');
+  const [feedback, setFeedback] = useState('');
+  const packet = useMemo(() => JSON.stringify(projectBoardSnapshot(props.project, props.members), null, 2), [props.project, props.members]);
+  const parse = () => {
+    const proposal = ProjectSteeringProposalSchema.parse(JSON.parse(proposalText));
+    if (proposal.based_on_board_version !== props.project.version) {
+      throw new Error(`This proposal targets Board v${proposal.based_on_board_version}; export current v${props.project.version} and ask Pro to revise it.`);
+    }
+    return { proposal, mutation: projectSteeringMutation(proposal, props.members) };
+  };
+  const preview = (): void => {
+    try {
+      const { proposal } = parse();
+      const existing = new Set(props.project.tasks.map((task) => task.id));
+      const additions = proposal.tasks.filter((task) => !existing.has(task.id)).length;
+      const updates = proposal.tasks.length - additions;
+      setFeedback(`Valid proposal ${proposal.proposal_version}: ${additions} new and ${updates} existing task(s). Applying is atomic; unsafe active-work edits will be rejected.`);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : String(error));
+    }
+  };
+  const apply = (): void => {
+    try {
+      const { proposal, mutation } = parse();
+      const { expected_version: _expected, ...pending } = mutation;
+      props.mutate(pending as PendingMutation);
+      setFeedback(`Applying proposal ${proposal.proposal_version}…`);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : String(error));
+    }
+  };
+  return (
+    <details className="nx-project-steering" data-testid="project-steering-bridge">
+      <summary>Pro steering bridge</summary>
+      <p>Copy this credential-free Board packet to Pro. Ask Pro to return only the edited <code>pro_steering_template</code> JSON object.</p>
+      <div className="nx-project-actions">
+        <button className="nx-btn" type="button" onClick={() => {
+          void navigator.clipboard.writeText(packet).then(
+            () => setFeedback(`Copied Board v${props.project.version} for Pro.`),
+            () => setFeedback('Clipboard access failed. Select the packet below and copy it manually.'),
+          );
+        }}>Copy Board packet</button>
+      </div>
+      <textarea aria-label="Board packet for Pro" readOnly rows={6} value={packet} />
+      {props.project.steering && <small>Last applied: proposal {props.project.steering.proposal_version}, based on Board v{props.project.steering.based_on_board_version}.</small>}
+      {props.canCoordinate && (
+        <>
+          <label>Pro proposal<textarea data-testid="pro-steering-input" rows={8} placeholder='{"format":"codor.pro-steering.v1",…}' value={proposalText} onChange={(event) => {
+            setProposalText(event.target.value);
+            setFeedback('');
+          }} /></label>
+          <div className="nx-project-actions">
+            <button className="nx-btn" type="button" disabled={!proposalText.trim()} onClick={preview}>Preview</button>
+            <button className="nx-btn is-primary" type="button" disabled={!proposalText.trim()} onClick={apply}>Apply atomically</button>
+          </div>
+        </>
+      )}
+      {feedback && <p role="status">{feedback}</p>}
+    </details>
   );
 }
 
