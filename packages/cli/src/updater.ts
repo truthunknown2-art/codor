@@ -253,7 +253,10 @@ export function createWindowsUpdateController(options: {
         rmSync(runtimeBackup, { recursive: true, force: true });
         const packagePath = join(maintenance, tgzAsset.name);
         writeFileSync(packagePath, tgz);
-        exec('npm.cmd', ['install', '--prefix', staging, packagePath, '--omit=dev', '--no-audit', '--no-fund'], { stdio: 'pipe' });
+        exec(process.env.ComSpec ?? 'cmd.exe', [
+          '/d', '/s', '/c', 'npm.cmd', 'install', '--prefix', staging, packagePath,
+          '--omit=dev', '--no-audit', '--no-fund',
+        ], { stdio: 'pipe' });
         const cliRoot = installedCliRoot(staging);
         if (!existsSync(join(cliRoot, 'dist', 'index.js')) || !existsSync(join(cliRoot, 'runtime', 'web'))) {
           throw new Error('staged release is missing its CLI entrypoint or web assets');

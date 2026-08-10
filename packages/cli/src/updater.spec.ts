@@ -60,6 +60,7 @@ describe('createWindowsUpdateController', () => {
     writeFileSync(join(dataDir, 'runtime', 'node_modules', '@richhardry', 'codor', 'package.json'), JSON.stringify({ version: '0.10.10' }));
     writeFileSync(join(dataDir, 'switchboard.sqlite'), 'live');
     let launched = false;
+    let npmLaunch: { command: string; args: readonly string[] } | undefined;
     const fetcher: typeof fetch = async (input) => {
       const url = String(input);
       if (url.endsWith('/releases/latest')) return new Response(JSON.stringify({
@@ -85,6 +86,7 @@ describe('createWindowsUpdateController', () => {
             if (args[0] === '/Run') launched = true;
             return Buffer.alloc(0);
           }
+          npmLaunch = { command, args };
           const staging = args[args.indexOf('--prefix') + 1]!;
           const cli = join(staging, 'node_modules', '@richhardry', 'codor', 'node_modules', '@codor', 'cli');
           mkdirSync(join(cli, 'dist'), { recursive: true });
@@ -98,6 +100,8 @@ describe('createWindowsUpdateController', () => {
     });
     const result = await controller.start();
     expect(result).toEqual({ accepted: true, version: '0.11.0', sha: SHA, tag: 'v0.11.0' });
+    expect(npmLaunch?.command.toLowerCase()).toMatch(/cmd\.exe$/);
+    expect(npmLaunch?.args.slice(0, 5)).toEqual(['/d', '/s', '/c', 'npm.cmd', 'install']);
     expect(launched).toBe(true);
     expect(existsSync(join(dataDir, 'maintenance', `switchboard-${SHA}.sqlite`))).toBe(true);
     expect(readFileSync(join(dataDir, 'maintenance', 'apply-update.ps1'), 'utf8')).toContain('rollback healthy');
