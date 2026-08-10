@@ -131,10 +131,7 @@ export function renderWindowsUpdateScript(options: {
     `  Start-Codor`,
     `  if (-not (Wait-Healthy)) { throw 'updated Codor did not become healthy within ${String(healthAttempts)} seconds' }`,
     `  Set-Content -LiteralPath $state -Value ${ps(success)} -Encoding utf8`,
-    `  Remove-Item -LiteralPath $rollbackRuntime -Recurse -Force`,
     `  Finish`,
-    `  Log 'update healthy; previous runtime removed'`,
-    `  exit 0`,
     `} catch {`,
     `  Log ('update failed: ' + $_.Exception.Message + '; restoring previous runtime and database')`,
     `  Stop-Codor`,
@@ -153,6 +150,11 @@ export function renderWindowsUpdateScript(options: {
     `  Log 'rollback healthy'`,
     `  exit 1`,
     `}`,
+    `try {`,
+    `  Remove-Item -LiteralPath $rollbackRuntime -Recurse -Force -ErrorAction Stop`,
+    `  Log 'update healthy; previous runtime removed'`,
+    `} catch { Log ('update healthy; previous runtime cleanup deferred: ' + $_.Exception.Message) }`,
+    `exit 0`,
     '',
   ].join('\r\n');
 }

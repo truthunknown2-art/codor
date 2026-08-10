@@ -45,6 +45,9 @@ describe('renderWindowsUpdateScript', () => {
     expect(script).toContain('Get-NetTCPConnection -LocalPort $port -State Listen');
     expect(script).toContain('Copy-Item -LiteralPath $databaseBackup -Destination $database -Force');
     expect(script).toContain('Move-WithRetry $rollbackRuntime $runtime');
+    expect(script.indexOf('try {\r\n  Remove-Item -LiteralPath $rollbackRuntime'))
+      .toBeGreaterThan(script.indexOf("Log 'rollback healthy'"));
+    expect(script).toContain('update healthy; previous runtime cleanup deferred: ');
   });
 });
 
