@@ -1,6 +1,6 @@
 # Milestone 2: Pro steering bridge
 
-Status: approved for implementation by the owner on 2026-08-10
+Status: complete and running in production on 2026-08-10
 Baseline: `truthunknown2-art/codor@55a9068`
 Production boundary: port `8137` and `C:\Users\pbirc\.codor` remain untouched until release acceptance.
 
@@ -97,3 +97,33 @@ not disturb active work.
 Completion: the released SHA runs on port `8137`, TruthForge has an exported
 review packet and steering template in Git, and its planner purpose names the
 new bridge and Board safety rules.
+
+WP3 result (2026-08-10): complete. PR #13 merged the final Windows updater
+repair as `f5f2f9f8508e6cabf5e4bbe0ad0222d8fd28fc56`; both binding PR CI runs
+(`31439963488` and `31439966294`) passed, including 262/262 browser tests, and
+release run `31441904751` passed the complete release gate. The immutable
+v0.10.14 release was pinned to that merge SHA. Its TGZ SHA-256 is
+`31b21c5c2bf8f96944756a65a008ba1d56d5cf7f686deeba1a647c2c91a47289` and
+its VSIX SHA-256 is
+`51933242e47a940c890a783ad0ef97e30cfc9b5e33b3e02933e140afec7ecc14`.
+
+Production was cut over only at an all-idle boundary. The consistent SQLite
+backup passed `PRAGMA quick_check` and has SHA-256
+`1C3A21159D76407621D49C96DA7A888CFFDF187851FCB80A231C06D78F18C4DA`.
+The first manual bootstrap deliberately rolled back healthy when its temporary
+`Codor Update` task was absent; production returned to v0.10.13 with HTTP 200
+and the preserved database. Repeating the same verified swap through the
+normal temporary-task lifecycle succeeded. Production now reports v0.10.14,
+SHA `f5f2f9f8508e6cabf5e4bbe0ad0222d8fd28fc56`, HTTP 200 on port 8137,
+`PRAGMA quick_check = ok`, all existing rooms present, zero pending deliveries
+or interactions, and the existing Tailscale HTTPS route still proxies to 8137.
+
+TruthForge accepted actual Pro proposal 3 from Board v76 through the browser
+preview and atomic apply path. The proposal added ten future tasks, revised
+four future backlog tasks, and changed no done, active, blocked, or in-review
+work. Guarded autopilot then advanced the canonical Board to v78 with 30 tasks.
+The credential-free Board packet, validated proposal, designated Pro-thread
+workflow, and planner purpose are persisted in `truthunknown2-art/truthforge`
+through `e94a97de838b747a10aa403ca84d758c816e38b6`; the resumed planner delivery
+was posted as TruthForge message `#4795` without a Kimi or fictional `@pro`
+recipient.
