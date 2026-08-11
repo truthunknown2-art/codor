@@ -1,6 +1,6 @@
 # Milestone 3: Project Board visual command center
 
-Status: approved; WP1-WP3 complete, WP4 release candidate
+Status: complete; WP1-WP4 accepted in production
 Baseline: `truthunknown2-art/codor@5d46957406b0b5e392fe92d5813de5054f59016a` (`v0.10.18`)
 Production boundary: port `8137` and `C:\Users\pbirc\.codor` remain untouched until release acceptance.
 
@@ -101,8 +101,23 @@ and real TruthForge desktop/mobile smoke.
 Completion: production serves the redesigned Board with all rooms and projects
 preserved, zero pending work caused by cutover, and exact release evidence.
 
-Release-candidate evidence: feature PR #20 merged as
+Release evidence: feature PR #20 merged as
 `5d7c8c07fb0ab915c9574934d36280631f82bd6f`; hosted CI runs `31535599019`
 and `31535621250` passed the complete build, workspace-test, browser-suite,
-audit, and installer gates. Production cutover and live data-preservation smoke
-remain before this package is complete.
+audit, and installer gates. Release PR #21 merged as
+`e1cd5e6466d96c5328a04bbd36035d465e77e92a`; release-candidate CI runs
+`31537224572` and `31537227863` passed, and release run `31538481237` published
+`v0.10.19` after the complete release gate. The immutable TGZ SHA-256 is
+`f18a30d77fd968d74e042f30d0637eac913ac563481dde30fd4ee2e29991a5b2`; the
+VSIX SHA-256 is
+`9e379278e86ed47161650e625a7efc429de941634238925c41830fbbed8dd2f8`.
+
+Result: complete. The all-idle updater installed `v0.10.19` from the fork at the
+exact release SHA with a pre-swap SQLite backup and healthy rollback state. Port
+`8137` and the Tailscale HTTPS proxy returned HTTP 200. TruthForge retained 22
+members, 5,463 messages, Board v206 with 7 milestones and 40 tasks; Araeyas
+Laptop retained 14 members, 7,380 messages, Board v11 with 2 milestones and 5
+tasks. No member was running, queued, awaiting input, or custody uncertain; no
+delivery was queued or delivering; no interaction was pending or answered.
+Hard-refresh production smoke rendered the command header, progress, Working
+now, Agent activity, all workflow columns, milestones, and planning tools.
