@@ -7,7 +7,7 @@ import {
   type ProjectTask,
 } from '@codor/protocol';
 import { Check, Plus, X } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { roomSlice, useClientStore } from '../app/store.js';
 import { Chip, IconButton, StatusPill } from '../primitives/primitives.js';
@@ -77,9 +77,12 @@ function ProjectView(props: {
   self?: Member;
   mutate(mutation: PendingMutation): void;
 }) {
+  const [activeOnly, setActiveOnly] = useState(false);
   const canCoordinate = props.self?.id === props.project.coordinator
     || (props.self?.kind === 'human' && props.self.role === 'owner');
   const complete = props.project.tasks.length > 0 && props.project.tasks.every((task) => task.status === 'done');
+  const activeTasks = props.project.tasks.filter((task) => task.status !== 'backlog' && task.status !== 'done');
+  const workingTasks = activeTasks.filter((task) => task.status === 'in_progress' || task.status === 'in_review');
   return (
     <>
       <div className="nx-project-meta">
@@ -88,6 +91,9 @@ function ProjectView(props: {
         </StatusPill>
         <span>v{props.project.version}</span>
         <span>{props.project.tasks.filter((task) => task.status === 'done').length}/{props.project.tasks.length} done</span>
+        <label className="nx-project-toggle">
+          <input type="checkbox" checked={activeOnly} onChange={(event) => setActiveOnly(event.target.checked)} /> Active only
+        </label>
         <label className="nx-project-toggle">
           <input
             type="checkbox"
@@ -104,6 +110,7 @@ function ProjectView(props: {
           <button className="nx-btn is-primary" disabled={!complete} onClick={() => props.mutate({ op: 'set_status', status: 'completed' })}>Complete project</button>
         </div>
       )}
+      <WorkingNow tasks={workingTasks} members={props.members} />
       <ProjectSteeringBridge
         project={props.project}
         members={props.members}
@@ -111,11 +118,15 @@ function ProjectView(props: {
         mutate={props.mutate}
       />
       <div className="nx-project-board">
-        {props.project.milestones.map((milestone) => (
-          <section className="nx-project-milestone" key={milestone.id}>
-            <header><h3>{milestone.title}</h3><span>{milestone.status}</span></header>
-            <div className="nx-project-tasks">
-              {props.project.tasks.filter((task) => task.milestone_id === milestone.id).map((task) => (
+        {props.project.milestones.map((milestone) => {
+          const tasks = props.project.tasks.filter((task) => task.milestone_id === milestone.id
+            && (!activeOnly || activeTasks.includes(task)));
+          if (activeOnly && tasks.length === 0) return null;
+          return (
+            <section className="nx-project-milestone" key={milestone.id}>
+              <header><h3>{milestone.title}</h3><span>{milestone.status}</span></header>
+              <div className="nx-project-tasks">
+                {tasks.map((task) => (
                 <TaskCard
                   key={task.id}
                   task={task}
@@ -125,17 +136,48 @@ function ProjectView(props: {
                   canCoordinate={canCoordinate}
                   mutate={props.mutate}
                 />
-              ))}
-              {props.project.tasks.every((task) => task.milestone_id !== milestone.id) && <p className="nx-project-empty">No tasks yet.</p>}
-            </div>
-          </section>
-        ))}
+                ))}
+                {tasks.length === 0 && <p className="nx-project-empty">No tasks yet.</p>}
+              </div>
+            </section>
+          );
+        })}
+        {activeOnly && activeTasks.length === 0 && <p className="nx-project-empty">No ready, active, review, or blocked tasks.</p>}
         {props.project.milestones.length === 0 && <p className="nx-project-empty">Add the first milestone to begin.</p>}
       </div>
       {canCoordinate && props.project.status !== 'completed' && props.project.status !== 'archived' && (
         <ProjectComposer project={props.project} members={props.members} mutate={props.mutate} />
       )}
     </>
+  );
+}
+
+const activeMemberStates = new Set(['running', 'queued', 'awaiting_input', 'custody_uncertain']);
+const taskAnchor = (task: ProjectTask): string => `project-task-${encodeURIComponent(task.id)}`;
+
+function WorkingNow(props: { tasks: ProjectTask[]; members: Member[] }) {
+  const byId = new Map(props.members.map((member) => [member.id, member]));
+  return (
+    <section className="nx-project-now" aria-labelledby="project-working-now">
+      <header><div><span className="nx-project-kicker">Live Board state</span><h3 id="project-working-now">Working now</h3></div><span>{props.tasks.length} task(s)</span></header>
+      {props.tasks.length === 0 ? <p>No task is currently marked in progress or review.</p> : (
+        <div className="nx-project-now-list">
+          {props.tasks.map((task) => {
+            const assignee = task.assignee ? byId.get(task.assignee) : undefined;
+            const gatekeepers = task.gatekeepers.map((id) => byId.get(id)).filter((member): member is Member => member !== undefined);
+            const participants = task.status === 'in_review' ? gatekeepers : assignee ? [assignee] : [];
+            const mismatch = task.status === 'in_review' && assignee && activeMemberStates.has(assignee.state ?? 'idle');
+            return (
+              <button className="nx-project-now-item" key={task.id} type="button" onClick={() => document.getElementById(taskAnchor(task))?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>
+                <span><StatusPill tone={mismatch ? 'warn' : 'live'}>{task.status.replace('_', ' ')}</StatusPill></span>
+                <span className="nx-project-now-copy"><strong>{task.id} — {task.title}</strong><small>{task.status === 'in_review' ? 'Review by' : 'Working agent'}: {participants.length > 0 ? participants.map((member) => `@${member.handle} · ${member.state ?? 'idle'}`).join(', ') : 'unassigned'}</small>{mismatch && <small className="is-warning">State mismatch: @{assignee.handle} is {assignee.state} while this task is marked in review.</small>}</span>
+                <span>Jump to task</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -147,7 +189,14 @@ function ProjectSteeringBridge(props: {
 }) {
   const [proposalText, setProposalText] = useState('');
   const [feedback, setFeedback] = useState('');
+  const [applying, setApplying] = useState<number>();
   const packet = useMemo(() => JSON.stringify(projectBoardSnapshot(props.project, props.members), null, 2), [props.project, props.members]);
+  useEffect(() => {
+    if (applying !== undefined && props.project.steering?.proposal_version === applying) {
+      setFeedback(`Applied proposal ${applying}. Board is now v${props.project.version}.`);
+      setApplying(undefined);
+    }
+  }, [applying, props.project.steering?.proposal_version, props.project.version]);
   const parse = () => {
     const proposal = ProjectSteeringProposalSchema.parse(JSON.parse(proposalText));
     if (proposal.based_on_board_version !== props.project.version) {
@@ -171,6 +220,7 @@ function ProjectSteeringBridge(props: {
       const { proposal, mutation } = parse();
       const { expected_version: _expected, ...pending } = mutation;
       props.mutate(pending as PendingMutation);
+      setApplying(proposal.proposal_version);
       setFeedback(`Applying proposal ${proposal.proposal_version}…`);
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : String(error));
@@ -221,7 +271,7 @@ function TaskCard(props: {
   const canSubmit = props.self?.id === props.task.assignee || (props.self?.kind === 'human' && props.self.role === 'owner');
   const canReview = props.task.gatekeepers.includes(props.self?.id ?? '') || (props.self?.kind === 'human' && props.self.role === 'owner');
   return (
-    <article className={`nx-project-task is-${props.task.status}`} data-testid={`project-task-${props.task.id}`}>
+    <article id={taskAnchor(props.task)} className={`nx-project-task is-${props.task.status}`} data-testid={`project-task-${props.task.id}`}>
       <header>
         <span className="nx-project-check" aria-label={props.task.status === 'done' ? 'Completed' : props.task.status}>
           {props.task.status === 'done' ? <Check size={14} /> : props.task.revision}

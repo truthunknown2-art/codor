@@ -288,6 +288,17 @@
 }
 .nx-project-meta { color: var(--c-secondary); font: var(--t-caption); }
 .nx-project-toggle { display: inline-flex; align-items: center; gap: var(--sp-2); }
+.nx-project-now { padding: var(--sp-3); border: 1px solid var(--c-line-strong); border-radius: var(--r-card); background: var(--c-raised); }
+.nx-project-now > header { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); margin-bottom: var(--sp-2); }
+.nx-project-now h3 { margin: 2px 0 0; font: var(--t-ui-strong); }
+.nx-project-now > header > span, .nx-project-now > p { color: var(--c-faded); font: var(--t-caption); }
+.nx-project-now > p { margin: 0; }
+.nx-project-now-list { display: grid; gap: var(--sp-2); }
+.nx-project-now-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--sp-3); width: 100%; padding: var(--sp-3); border: 1px solid var(--c-line); border-radius: var(--r-control); background: var(--c-surface); color: var(--c-ink); text-align: left; cursor: pointer; }
+.nx-project-now-item:hover { border-color: var(--c-line-strong); background: var(--c-muted); }
+.nx-project-now-copy strong, .nx-project-now-copy small { display: block; }
+.nx-project-now-copy small, .nx-project-now-item > span:last-child { color: var(--c-faded); font: var(--t-caption); }
+.nx-project-now-copy .is-warning { color: var(--c-warn-text); }
 .nx-project-board { display: flex; flex-direction: column; gap: var(--sp-4); }
 .nx-project-milestone { border: 1px solid var(--c-line); border-radius: var(--r-card); background: var(--c-raised); overflow: hidden; }
 .nx-project-milestone > header { display: flex; justify-content: space-between; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--c-line); }
@@ -3327,6 +3338,8 @@
 .nx-swatch:focus-visible { outline: 2px solid var(--c-ink); outline-offset: 2px; }
 
 @media (max-width: 720px) {
+  .nx-project-now-item { grid-template-columns: auto minmax(0, 1fr); }
+  .nx-project-now-item > span:last-child { grid-column: 2; }
   .nx-harness-grid { grid-template-columns: repeat(2, 1fr); }
   .nx-modal.is-structured .nx-run-diff-body {
     grid-template-columns: minmax(0, 1fr);

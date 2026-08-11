@@ -35,6 +35,9 @@ test('the canonical board survives reload and completes gated work on desktop an
 
   const card = board.getByTestId('project-task-t1');
   await expect(card).toContainText('ready');
+  await board.getByLabel('Active only').check();
+  await expect(card).toBeVisible();
+  await board.getByLabel('Active only').uncheck();
   await board.getByText('Pro steering bridge').click();
   const packet = JSON.parse(await board.getByLabel('Board packet for Pro').inputValue());
   packet.pro_steering_template.summary = 'Pro tightened the first task';
@@ -44,12 +47,22 @@ test('the canonical board survives reload and completes gated work on desktop an
   await expect(board.getByRole('status')).toContainText('Valid proposal 1');
   await board.getByRole('button', { name: 'Apply atomically' }).click();
   await expect(card).toContainText('Build Board bridge');
+  await expect(board.getByRole('status')).toContainText('Applied proposal 1');
 
   await card.getByPlaceholder('Evidence or blocking note').fill('Verified in the browser');
   await card.getByRole('button', { name: 'Submit' }).click();
   await expect(card).toContainText('in review');
+  const working = board.getByRole('region', { name: 'Working now' });
+  await expect(working).toContainText('t1 — Build Board bridge');
+  await expect(working).toContainText('Review by: @scout · running');
+  await expect(working.getByRole('button', { name: /Jump to task/ })).toBeVisible();
   await card.getByRole('button', { name: 'Approve' }).click();
   await expect(card).toContainText('done');
+  await expect(working).toContainText('No task is currently marked in progress or review.');
+  await board.getByLabel('Active only').check();
+  await expect(card).toBeHidden();
+  await expect(board).toContainText('No ready, active, review, or blocked tasks.');
+  await board.getByLabel('Active only').uncheck();
   await board.getByRole('button', { name: 'Complete project' }).click();
   await expect(board).toContainText('completed');
 
