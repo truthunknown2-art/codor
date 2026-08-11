@@ -8,7 +8,7 @@ function memberMaps(members: Member[]): {
   handle(id: string): string;
 } {
   const current = members.filter(active);
-  const byId = new Map(current.map((member) => [member.id, member]));
+  const byId = new Map(members.map((member) => [member.id, member]));
   const byHandle = new Map(current.map((member) => [member.handle, member]));
   return {
     byHandle,
