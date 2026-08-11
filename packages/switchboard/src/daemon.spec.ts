@@ -3132,6 +3132,7 @@ describe('failed turns', () => {
     });
     const detail = 'Prompt is too long: 986729 tokens exceed the 1000000 token context window';
     const compact = vi.spyOn(claudeFake, 'compactSession');
+    const interrupt = vi.spyOn(claudeFake, 'interrupt');
     claudeFake.enqueue({ kind: 'complete', final_text: detail, error: detail, status: 'failed' });
     claudeFake.enqueue({ kind: 'complete', final_text: 'recovered from the board and repository' });
 
@@ -3147,6 +3148,7 @@ describe('failed turns', () => {
     expect(replacement.id).not.toBe(alpha.id);
     expect(claudeFake.deliveries.at(-1)?.payload).toContain('[replacement recovery brief for @claude-alpha]');
     expect(compact).not.toHaveBeenCalled();
+    expect(interrupt).toHaveBeenCalledTimes(1);
   });
 
   it('keeps partial journal evidence visible without turning a failed root into a reply', async () => {

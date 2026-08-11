@@ -2071,6 +2071,7 @@ export class Daemon {
     let session: Session;
     try {
       const adapter = this.requireAdapter(existing.harness!);
+      const previousSession = this.sessions.get(memberId);
       const spawnOpts = {
         cwd: existing.cwd ?? process.cwd(),
         policy: existing.policy,
@@ -2080,6 +2081,7 @@ export class Daemon {
       };
       validateSpawnOptions(adapter, spawnOpts);
       session = adapter.spawn(spawnOpts);
+      if (previousSession !== undefined) adapter.interrupt(previousSession);
     } catch (error) {
       const summary = error instanceof Error ? error.message : String(error);
       const failed = this.store.updateMember(room, memberId, {
