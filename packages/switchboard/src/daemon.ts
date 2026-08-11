@@ -4499,6 +4499,10 @@ export class Daemon {
       : routedFanout;
     const day = new Date().toISOString().slice(0, 10);
     const currentMember = this.store.getMember(room, memberId);
+    const autoReplaceContextOverflow = completion.status === 'failed'
+      && currentMember?.harness === 'claude-code'
+      && toolCalls === 0
+      && /\bprompt is too long\b/i.test(failure ?? '');
     const durableFailure = completion.status === 'failed' && !recoverableFailure && currentMember !== undefined
       ? {
           code: 'turn_failed' as const,
@@ -4588,14 +4592,31 @@ export class Daemon {
     // harn:assume vscode-copilot-recoverable-native-failure-preserves-context ref=vscode-copilot-recoverable-finalization
     if (completion.status === 'failed' && !recoverableFailure) {
       this.blockDeadProjectAssignee(room, completed.member);
-      this.postSystemMessage(
-        room,
-        `@${completed.member.handle} died mid-run (turn #${runMsgId} failed): ${
-          completed.member.failure?.summary ?? 'agent turn failed'
-        }. ${completed.member.failure?.recommended_action === 'revive'
-          ? 'Revive its persisted session.'
-          : 'Replace and continue from a recovery brief; the uncertain turn will not be replayed.'}`,
-      );
+      if (autoReplaceContextOverflow) {
+        this.postSystemMessage(
+          room,
+          `@${completed.member.handle} exhausted Claude's context before running any tools; Codor is replacing it with fresh context and a recovery brief.`,
+        );
+        this.track((async () => {
+          try {
+            await this.replaceMemberAndContinue(room, completed.member.id);
+          } catch (error) {
+            this.postSystemMessage(
+              room,
+              `Automatic replacement for @${completed.member.handle} failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        })());
+      } else {
+        this.postSystemMessage(
+          room,
+          `@${completed.member.handle} died mid-run (turn #${runMsgId} failed): ${
+            completed.member.failure?.summary ?? 'agent turn failed'
+          }. ${completed.member.failure?.recommended_action === 'revive'
+            ? 'Revive its persisted session.'
+            : 'Replace and continue from a recovery brief; the uncertain turn will not be replayed.'}`,
+        );
+      }
     }
     // harn:end vscode-copilot-recoverable-native-failure-preserves-context
   }
