@@ -1980,7 +1980,14 @@ export class Store {
     return this.db.transaction(() => {
       const existing = this.getMember(room, memberId);
       if (!existing) throw new Error(`no such member: ${memberId}`);
-      const merged = MemberSchema.parse({ ...existing, ...patch });
+      // Removal is a terminal identity transition. A late turn finalizer or stale
+      // configuration write may still hold a pre-removal member snapshot, but it
+      // must never make that tombstone active again.
+      const merged = MemberSchema.parse({
+        ...existing,
+        ...patch,
+        ...(existing.removed_ts !== undefined && { removed_ts: existing.removed_ts }),
+      });
       // harn:assume member-task-projection-is-durable-and-session-scoped ref=member-task-storage
       // Preserve the task projection across ordinary config edits; clear it only when
       // this update moves the member to a genuinely different native session.
