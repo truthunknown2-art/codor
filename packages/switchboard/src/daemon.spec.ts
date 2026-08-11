@@ -145,6 +145,7 @@ describe('guarded project delivery automation', () => {
     initialText?: string;
     initialStatus?: 'completed' | 'failed';
     initialError?: string;
+    initialDelay?: number;
   } = {}) {
     const planner = spawnAgent('planner');
     const coder = spawnAgent('coder');
@@ -175,6 +176,7 @@ describe('guarded project delivery automation', () => {
       final_text: options.initialText ?? 'implemented; tests pass',
       status: options.initialStatus,
       error: options.initialError,
+      delay_ms: options.initialDelay,
     });
     project = daemon.mutateProject('eng', planner.id, {
       op: 'set_status', expected_version: project.version, status: 'active',
@@ -222,18 +224,30 @@ describe('guarded project delivery automation', () => {
   });
 
   it('dispatches once, returns an unmentioned result, and preserves the link across restart', async () => {
-    const { planner, reviewer } = createProject();
+    const { planner, coder, reviewer } = createProject();
     await daemon.settle();
     let project = daemon.store.getProject('eng')!;
-    const task = project.tasks[0]!;
-    expect(task.status).toBe('in_review');
+    let task = project.tasks[0]!;
+    expect(task.status).toBe('in_progress');
     expect(task.dispatches?.work).toHaveLength(1);
-    expect(task.dispatches?.reviews).toHaveLength(1);
+    expect(task.dispatches?.reviews).toHaveLength(0);
     expect(task.evidence.some((item) => item.type === 'message')).toBe(true);
     expect(task.dispatches?.work[0]).toMatchObject({
       revision: 0,
       coordinator_delivery_id: expect.any(String),
     });
+    expect(fake.deliveries[0]?.payload).toContain('Measured production result');
+    expect(fake.deliveries[0]?.payload).toContain('tests pass');
+    expect(fake.deliveries[0]?.payload).toContain('codor project submit t1 -r eng');
+    expect(fake.deliveries[0]?.payload).toContain('Do not start hidden Goal/CreateGoal');
+
+    project = daemon.mutateProject('eng', coder.id, {
+      op: 'submit', expected_version: project.version, task_id: 't1',
+      evidence: [{ type: 'note', text: 'terminal measured result' }],
+    });
+    task = project.tasks[0]!;
+    expect(task.status).toBe('in_review');
+    expect(task.dispatches?.reviews).toHaveLength(1);
     expect(task.dispatches?.reviews[0]).toMatchObject({
       revision: 0,
       gatekeeper: reviewer.id,
@@ -241,9 +255,6 @@ describe('guarded project delivery automation', () => {
     expect(daemon.store.getDeliveryPayloadSnapshot(
       'eng', task.dispatches!.reviews[0]!.delivery_id,
     )).toContain('codor project review t1 -r eng');
-    expect(fake.deliveries[0]?.payload).toContain('Measured production result');
-    expect(fake.deliveries[0]?.payload).toContain('tests pass');
-    expect(fake.deliveries[0]?.payload).toContain('Do not start hidden Goal/CreateGoal');
 
     await daemon.close();
     daemon = newDaemon();
@@ -255,11 +266,33 @@ describe('guarded project delivery automation', () => {
     expect(daemon.store.listDeliveries('eng', { recipient: reviewer.id, state: 'queued' })).toHaveLength(1);
   });
 
+  it('waits for the explicitly submitted worker turn to finish before dispatching review', async () => {
+    const { coder, reviewer } = createProject({ initialDelay: 150 });
+    await until(() => daemon.store.getProject('eng')?.tasks[0]?.status === 'in_progress' ? true : undefined);
+    let project = daemon.store.getProject('eng')!;
+    project = daemon.mutateProject('eng', coder.id, {
+      op: 'submit', expected_version: project.version, task_id: 't1',
+      evidence: [{ type: 'note', text: 'terminal submission requested' }],
+    });
+    expect(project.tasks[0]?.status).toBe('in_review');
+    expect(project.tasks[0]?.dispatches?.reviews).toHaveLength(0);
+    expect(daemon.store.listDeliveries('eng', { recipient: reviewer.id, state: 'queued' })).toHaveLength(0);
+
+    await daemon.settle();
+    project = daemon.store.getProject('eng')!;
+    expect(project.tasks[0]?.dispatches?.reviews).toHaveLength(1);
+    expect(daemon.store.listDeliveries('eng', { recipient: reviewer.id, state: 'queued' })).toHaveLength(1);
+  });
+
   it('redispatches one new revision after rejection and releases an assigned dependency', async () => {
     const { planner, coder, reviewer } = createProject({ dependent: true });
     await daemon.settle();
     daemon.pauseMember('eng', coder.id);
     let project = daemon.store.getProject('eng')!;
+    project = daemon.mutateProject('eng', coder.id, {
+      op: 'submit', expected_version: project.version, task_id: 't1',
+      evidence: [{ type: 'note', text: 'initial terminal result' }],
+    });
     project = daemon.mutateProject('eng', reviewer.id, {
       op: 'review', expected_version: project.version, task_id: 't1',
       decision: 'changes_requested', note: 'correct the boundary',
@@ -271,6 +304,10 @@ describe('guarded project delivery automation', () => {
     daemon.unpauseMember('eng', coder.id);
     await daemon.settle();
     project = daemon.store.getProject('eng')!;
+    project = daemon.mutateProject('eng', coder.id, {
+      op: 'submit', expected_version: project.version, task_id: 't1',
+      evidence: [{ type: 'note', text: 'corrected terminal result' }],
+    });
     expect(project.tasks[0]).toMatchObject({ status: 'in_review', revision: 1 });
     project = daemon.mutateProject('eng', reviewer.id, {
       op: 'review', expected_version: project.version, task_id: 't1', decision: 'approved',
@@ -283,8 +320,13 @@ describe('guarded project delivery automation', () => {
   });
 
   it('sends one continuation nudge, then pauses after a second non-advancing response', async () => {
-    const { planner, reviewer } = createProject();
+    const { planner, coder, reviewer } = createProject();
     await daemon.settle();
+    let current = daemon.store.getProject('eng')!;
+    current = daemon.mutateProject('eng', coder.id, {
+      op: 'submit', expected_version: current.version, task_id: 't1',
+      evidence: [{ type: 'note', text: 'terminal result' }],
+    });
     fake.enqueue(
       { kind: 'complete', final_text: 'reviewed but did not record a board decision' },
       { kind: 'complete', final_text: 'coordinator response without a board mutation' },
@@ -358,6 +400,10 @@ describe('guarded project delivery automation', () => {
     });
     await daemon.settle();
     braked = daemon.store.getProject('braked')!;
+    braked = daemon.mutateProject('braked', brakedCoder.id, {
+      op: 'submit', expected_version: braked.version, task_id: 't1',
+      evidence: [{ type: 'note', text: 'terminal braked result' }],
+    });
     const coordinatorId = braked.tasks[0]?.dispatches?.work[0]?.coordinator_delivery_id;
     expect(daemon.store.getDelivery('braked', coordinatorId!)?.state).toBe('held');
     expect(braked.tasks[0]?.status).toBe('done');
@@ -386,7 +432,11 @@ describe('guarded project delivery automation', () => {
       purpose: 'Implement narrowly, measure every claim, and return exact evidence to the coordinator.',
       state: 'idle',
     });
-    const project = daemon.store.getProject('eng')!;
+    let project = daemon.store.getProject('eng')!;
+    project = daemon.mutateProject('eng', replacement.id, {
+      op: 'submit', expected_version: project.version, task_id: 't1',
+      evidence: [{ type: 'note', text: 'replacement terminal result' }],
+    });
     expect(project.tasks[0]).toMatchObject({ assignee: replacement.id, status: 'in_review', revision: 1 });
     const recovery = fake.deliveries.find((delivery) =>
       delivery.payload.includes('[replacement recovery brief for @coder]'));
@@ -419,6 +469,10 @@ describe('guarded project delivery automation', () => {
     await daemon.settle();
 
     project = daemon.store.getProject('eng')!;
+    project = daemon.mutateProject('eng', coder.id, {
+      op: 'submit', expected_version: project.version, task_id: 't1',
+      evidence: [{ type: 'note', text: 'barrier synthesis terminal' }],
+    });
     expect(project.tasks[0]?.status).toBe('in_review');
     expect(project.tasks[0]?.dispatches?.work[0]?.group_id).toBeUndefined();
     const resultEvidence = project.tasks[0]?.evidence.find((item) => item.type === 'message');

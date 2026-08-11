@@ -5685,7 +5685,9 @@ export class Daemon {
       `Dependencies: ${dependencies}`,
       `Workspace mode: ${task.workspace_mode}`,
       `Coordinator: @${coordinator?.handle ?? project.coordinator}`,
-      'Complete this one delivered turn. Put the measured evidence, exact status, and next action in your final response.',
+      'Keep this delivered turn open until every process you started for the task is terminal. Do not leave owned work running in a detached or background process.',
+      `When the task is truly terminal, run: codor project submit ${task.id} -r ${project.room} --note "<measured result and exact evidence>"`,
+      'A final chat response does not submit the Board task. Put the measured evidence, exact status, and next action in your final response after the submit command succeeds.',
       `If blocked, run: codor project block ${task.id} -r ${project.room} --note "<reason>"`,
       'Do not start hidden Goal/CreateGoal or automatic continuation state; Codor owns later deliveries.',
     ].join('\n\n');
@@ -5777,16 +5779,15 @@ export class Daemon {
 
     const failed = completion.status !== 'completed';
     const failure = (completion.error ?? completion.final_text ?? 'agent turn failed').trim() || 'agent turn failed';
-    const recipients = failed ? [project.coordinator] : [...new Set([...task.gatekeepers, project.coordinator])];
+    const recipients = [project.coordinator];
     const source: NewMessage = failed
       ? this.projectSystemMessage(room, `[project task ${task.id} failed]\n\n${failure}`, [resultMessageId])
       : this.projectSystemMessage(room, [
-          `[project task ${task.id} revision ${String(work.revision)} ready for review]`,
+          `[project task ${task.id} revision ${String(work.revision)} worker turn completed]`,
           `Task: ${task.title}`,
-          `Acceptance criteria:\n- ${task.acceptance_criteria.join('\n- ')}`,
           `Worker result: #${String(resultMessageId)}`,
-          `Gatekeepers must record a decision with either:\n- codor project review ${task.id} -r ${room} --decision approved\n- codor project review ${task.id} -r ${room} --decision changes-requested --note "<reason>"`,
-          'The coordinator receives this task-linked result automatically; no remembered @mention is required.',
+          `The Board task remains ${task.status}; only an explicit codor project submit ${task.id} -r ${room} command can make it reviewable.`,
+          'The coordinator receives this task-linked result automatically. If this result is interim, return custody to the assignee without starting duplicate work.',
         ].join('\n\n'), [resultMessageId]);
     const existing = new Map<string, Delivery>();
     const workDelivery = this.store.getDelivery(room, workDeliveryId);
@@ -5811,23 +5812,10 @@ export class Daemon {
               item.type === 'message' && item.message_id === resultMessageId)
               ? candidate.evidence
               : [...candidate.evidence, { type: 'message' as const, message_id: resultMessageId }];
-            const reviews = failed ? candidate.dispatches!.reviews : [
-              ...candidate.dispatches!.reviews,
-              ...candidate.gatekeepers
-                .filter((gatekeeper) => !candidate.dispatches!.reviews.some((dispatch) =>
-                  dispatch.revision === work.revision && dispatch.gatekeeper === gatekeeper))
-                .map((gatekeeper) => ({
-                  revision: work.revision,
-                  gatekeeper,
-                  delivery_id: links.get(gatekeeper)!.id,
-                })),
-            ];
             return {
               ...candidate,
               ...(currentRevision && {
-                status: failed
-                  ? 'blocked' as const
-                  : candidate.gatekeepers.length === 0 ? 'done' as const : 'in_review' as const,
+                ...(failed && { status: 'blocked' as const }),
                 evidence: failed
                   ? [...evidence, { type: 'note' as const, text: failure.slice(0, 2_000) }]
                   : evidence,
@@ -5844,7 +5832,7 @@ export class Daemon {
                       };
                     })()
                   : dispatch),
-                reviews,
+                reviews: candidate.dispatches!.reviews,
               },
             };
           });
@@ -5856,6 +5844,50 @@ export class Daemon {
     this.emitProject(committed.project);
     this.dispatchCreatedDeliveries(room, committed.deliveries);
     return committed.deliveries;
+  }
+
+  private dispatchSubmittedProjectReview(project: ProjectDocument, taskId: string): ProjectDocument {
+    const task = project.tasks.find((candidate) => candidate.id === taskId);
+    if (!task || task.status !== 'in_review') return project;
+    const pending = task.gatekeepers.filter((gatekeeper) => !task.dispatches?.reviews.some((dispatch) =>
+      dispatch.revision === task.revision && dispatch.gatekeeper === gatekeeper));
+    if (pending.length === 0) return project;
+    const committed = this.store.commitProjectDispatch(project.room, {
+      expectedVersion: project.version,
+      message: this.projectSystemMessage(project.room, [
+        `[project task ${task.id} revision ${String(task.revision)} explicitly submitted for review]`,
+        `Task: ${task.title}`,
+        `Acceptance criteria:\n- ${task.acceptance_criteria.join('\n- ')}`,
+        'Review the canonical Board evidence and record a decision with either:',
+        `- codor project review ${task.id} -r ${project.room} --decision approved`,
+        `- codor project review ${task.id} -r ${project.room} --decision changes-requested --note "<reason>"`,
+        'Gatekeepers receive this task-linked submission automatically; no remembered @mention is required. The coordinator receives the worker result separately.',
+      ].join('\n\n')),
+      plan: (message) => ({
+        fanout: this.projectFanout(project.room, message, pending, new Map(), 1),
+        project: (deliveries) => {
+          const links = new Map(deliveries.map((delivery) => [delivery.recipient, delivery]));
+          return this.projectInput(project, project.tasks.map((candidate) => candidate.id === task.id ? {
+            ...candidate,
+            dispatches: {
+              work: candidate.dispatches?.work ?? [],
+              reviews: [
+                ...(candidate.dispatches?.reviews ?? []),
+                ...pending.map((gatekeeper) => ({
+                  revision: candidate.revision,
+                  gatekeeper,
+                  delivery_id: links.get(gatekeeper)!.id,
+                })),
+              ],
+            },
+          } : candidate));
+        },
+      }),
+    });
+    this.emitMessage(project.room, committed.message);
+    this.emitProject(committed.project);
+    this.dispatchCreatedDeliveries(project.room, committed.deliveries);
+    return committed.project;
   }
 
   private finishProjectReview(
@@ -5976,6 +6008,12 @@ export class Daemon {
     }
     const unassigned = project.tasks.find((task) => task.status === 'ready' && task.assignee === undefined);
     if (unassigned) return `ready task ${unassigned.id} needs an assignee`;
+    const unsubmitted = project.tasks.find((task) => task.status === 'in_progress'
+      && task.dispatches?.work.some((dispatch) =>
+        dispatch.revision === task.revision && dispatch.result_message_id !== undefined));
+    if (unsubmitted) {
+      return `task ${unsubmitted.id} has a finished worker turn but no explicit Board submission; return it to the assignee or record the blocking decision`;
+    }
     const undecided = project.tasks.find((task) => task.status === 'in_review' && task.gatekeepers.some((gatekeeper) => {
       const delivered = task.dispatches?.reviews.find((dispatch) =>
         dispatch.revision === task.revision && dispatch.gatekeeper === gatekeeper);
@@ -6092,6 +6130,16 @@ export class Daemon {
     for (let pass = 0; pass < 1_000; pass += 1) {
       const project = this.store.getProject(room);
       if (!project || project.status !== 'active' || !project.guarded_autopilot) return;
+
+      const submitted = project.tasks.find((task) => task.status === 'in_review'
+        && task.dispatches?.work.some((dispatch) =>
+          dispatch.revision === task.revision && dispatch.result_message_id !== undefined)
+        && task.gatekeepers.some((gatekeeper) => !task.dispatches?.reviews.some((dispatch) =>
+          dispatch.revision === task.revision && dispatch.gatekeeper === gatekeeper)));
+      if (submitted) {
+        this.dispatchSubmittedProjectReview(project, submitted.id);
+        continue;
+      }
 
       const ready = project.tasks.find((task) =>
         task.status === 'ready' &&

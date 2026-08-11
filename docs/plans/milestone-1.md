@@ -241,6 +241,15 @@ Blocked, inactive, completed, or still-agent-active work does not self-loop.
 Project task prompts explicitly prohibit hidden Goal/CreateGoal continuation
 state and keep long-running truth in the board, Git, and visible messages.
 
+WP5 correction (2026-08-10): an ended worker chat turn is no longer treated as
+task submission. The turn result remains attached and returns to the
+coordinator, but only the assignee's explicit `codor project submit` mutation
+can move the task to review. Review delivery waits for both that durable
+submission and terminal completion of the delivered turn. Task prompts also
+forbid leaving owned processes detached. This prevents an interim handoff from
+promoting a still-running external command to review and leaving no event that
+can wake the assignee when the command later finishes.
+
 Verification evidence:
 
 - Protocol and Switchboard TypeScript builds passed.
@@ -419,8 +428,9 @@ Verification and release evidence:
 Integration and production acceptance:
 
 - The deterministic guarded-project integration suite covers exactly-once
-  dispatch across restart, worker completion without a mention, a rejected
-  revision and redispatch, review/test barriers, dependency unlocking,
+  dispatch across restart, mentionless worker-result return plus explicit
+  submission, a rejected revision and redispatch, review/test barriers,
+  dependency unlocking,
   coordinator return, the one-nudge latch, brakes, failure blocking, and a
   bounded replacement recovery brief. Browser suites cover team-profile
   channel creation, desktop/mobile board access, identity colours, and the
