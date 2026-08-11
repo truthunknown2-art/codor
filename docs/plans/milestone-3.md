@@ -1,6 +1,6 @@
 # Milestone 3: Project Board visual command center
 
-Status: approved; WP1-WP3 complete, WP4 in progress
+Status: approved; WP1-WP3 complete, WP4 release candidate
 Baseline: `truthunknown2-art/codor@5d46957406b0b5e392fe92d5813de5054f59016a` (`v0.10.18`)
 Production boundary: port `8137` and `C:\Users\pbirc\.codor` remain untouched until release acceptance.
 
@@ -100,3 +100,9 @@ and real TruthForge desktop/mobile smoke.
 
 Completion: production serves the redesigned Board with all rooms and projects
 preserved, zero pending work caused by cutover, and exact release evidence.
+
+Release-candidate evidence: feature PR #20 merged as
+`5d7c8c07fb0ab915c9574934d36280631f82bd6f`; hosted CI runs `31535599019`
+and `31535621250` passed the complete build, workspace-test, browser-suite,
+audit, and installer gates. Production cutover and live data-preservation smoke
+remain before this package is complete.
