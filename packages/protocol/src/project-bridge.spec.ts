@@ -32,6 +32,15 @@ describe('Pro steering bridge', () => {
     expect(JSON.stringify(packet)).not.toContain(PLANNER);
   });
 
+  it('keeps completed work attributable after its member is removed', () => {
+    const packet = projectBoardSnapshot({
+      ...project,
+      tasks: [{ ...project.tasks[0]!, status: 'done' }],
+    }, [members[0]!, { ...members[1]!, state: 'dead', removed_ts: '2026-08-11T00:00:00.000Z' }, members[2]!]);
+    expect(packet.tasks[0]?.assignee).toBe('coder');
+    expect(packet.members.map((member) => member.handle)).not.toContain('coder');
+  });
+
   it('resolves proposal handles into one atomic mutation', () => {
     const mutation = projectSteeringMutation({
       format: 'codor.pro-steering.v1', proposal_version: 2, based_on_board_version: 7,
