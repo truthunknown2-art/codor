@@ -388,7 +388,7 @@
 .nx-project-menu > summary::-webkit-details-marker { display: none; }
 .nx-project-menu > div { position: absolute; right: 0; top: calc(100% + var(--sp-2)); z-index: 5; display: grid; gap: var(--sp-2); min-width: 180px; padding: var(--sp-3); border: 1px solid var(--c-line); border-radius: var(--r-card); background: var(--c-surface); box-shadow: var(--e-float); }
 .nx-project-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); padding: var(--sp-2) var(--sp-4); border-bottom: 1px solid var(--c-line); background: var(--c-raised); color: var(--c-secondary); font: var(--t-caption); }
-.nx-project-command { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: var(--sp-3); }
+.nx-project-command { display: grid; grid-template-columns: minmax(0, 1fr) 260px; align-items: start; gap: var(--sp-3); }
 .nx-project-command .nx-project-now, .nx-project-agents { margin: 0; }
 .nx-project-now-list { grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); }
 .nx-project-now-item { grid-template-columns: 1fr; align-content: start; min-height: 128px; border-top: 2px solid var(--c-accent); }
@@ -396,13 +396,39 @@
 .nx-project-now-item.is-in_review { border-color: var(--c-warn); background: color-mix(in srgb, var(--c-warn-tint) 38%, var(--c-surface)); }
 .nx-project-now-item.is-blocked { border-color: var(--c-error); background: color-mix(in srgb, var(--c-error-tint) 42%, var(--c-surface)); }
 .nx-project-now-item > span:last-child { justify-self: end; align-self: end; }
-.nx-project-agents { padding: var(--sp-3); border: 1px solid var(--c-line-strong); border-radius: var(--r-card); background: var(--c-raised); }
+.nx-project-agents { max-height: 240px; padding: var(--sp-3); overflow-y: auto; border: 1px solid var(--c-line-strong); border-radius: var(--r-card); background: var(--c-raised); }
 .nx-project-agents > header { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); margin-bottom: var(--sp-2); }
 .nx-project-agents h3 { margin: 0; font: var(--t-ui-strong); }
 .nx-project-agents header span, .nx-project-agents > p { color: var(--c-faded); font: var(--t-caption); }
 .nx-project-agent { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) 0; border-top: 1px solid var(--c-line); }
 .nx-project-agent > span { display: grid; min-width: 0; }
 .nx-project-agent small { color: var(--c-faded); font: var(--t-caption); text-transform: capitalize; }
+.nx-project-board {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(230px, 1fr));
+  align-items: start;
+  gap: var(--sp-3);
+  overflow-x: auto;
+  padding-bottom: var(--sp-2);
+}
+.nx-project-column { min-width: 0; border: 1px solid var(--c-line); border-radius: var(--r-card); background: var(--c-raised); overflow: hidden; }
+.nx-project-column > header { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); padding: var(--sp-3); border-top: 2px solid var(--c-line-strong); border-bottom: 1px solid var(--c-line); }
+.nx-project-column.is-in_progress > header { border-top-color: var(--c-accent); background: var(--c-accent-tint); }
+.nx-project-column.is-in_review > header { border-top-color: var(--c-warn); background: var(--c-warn-tint); }
+.nx-project-column.is-blocked > header { border-top-color: var(--c-error); background: var(--c-error-tint); }
+.nx-project-column.is-done > header { border-top-color: var(--c-live); background: var(--c-live-tint); }
+.nx-project-column h3 { margin: 0; font: var(--t-caption-strong); text-transform: uppercase; letter-spacing: .04em; }
+.nx-project-column > header span { display: grid; place-items: center; min-width: 22px; height: 22px; padding: 0 var(--sp-1); border-radius: var(--r-full); background: var(--c-muted); color: var(--c-secondary); font: var(--t-caption-strong); }
+.nx-project-column .nx-project-tasks { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-2); }
+.nx-project-column .nx-project-task { padding: var(--sp-3); box-shadow: var(--e-raised); }
+.nx-project-column .nx-project-task > p { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; margin-bottom: var(--sp-2); }
+.nx-project-task-meta { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-bottom: var(--sp-2); }
+.nx-project-task-meta span { padding: 2px 6px; border-radius: var(--r-full); background: var(--c-muted); color: var(--c-secondary); font: var(--t-caption); }
+.nx-project-task-detail { margin-bottom: var(--sp-2); border-top: 1px solid var(--c-line); }
+.nx-project-task-detail > summary { padding: var(--sp-2) 0; cursor: pointer; color: var(--c-secondary); font: var(--t-caption-strong); }
+.nx-project-task-detail h4 { margin: var(--sp-2) 0; font: var(--t-caption-strong); }
+.nx-project-task-detail ul { font: var(--t-caption); }
+.nx-project-column .nx-project-empty { padding: var(--sp-3); text-align: center; }
 
 @media (max-width: 1050px) {
   .nx-project-head { grid-template-columns: minmax(0, 1fr) minmax(150px, .4fr) auto auto; }
@@ -411,6 +437,7 @@
   .nx-project-agents { display: flex; align-items: center; gap: var(--sp-3); overflow-x: auto; }
   .nx-project-agents > header { min-width: 140px; margin: 0; }
   .nx-project-agent { min-width: 150px; border-top: 0; border-left: 1px solid var(--c-line); padding: 0 0 0 var(--sp-3); }
+  .nx-project-board { grid-template-columns: repeat(6, 260px); }
 }
 
 @media (max-width: 719px) {
@@ -423,6 +450,8 @@
   .nx-project-now-list { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(82vw, 1fr); overflow-x: auto; scroll-snap-type: x proximity; }
   .nx-project-now-item { scroll-snap-align: start; }
   .nx-project-toolbar { position: sticky; top: 76px; z-index: 2; }
+  .nx-project-board { grid-template-columns: repeat(6, minmax(82vw, 1fr)); scroll-snap-type: x proximity; }
+  .nx-project-column { scroll-snap-align: start; }
 }
 
 /* ── Transcript ──────────────────────────────────────────────────────── */

@@ -1,6 +1,6 @@
 # Milestone 3: Project Board visual command center
 
-Status: approved; WP1 complete, WP2 in progress
+Status: approved; WP1-WP2 complete, WP3 in progress
 Baseline: `truthunknown2-art/codor@5d46957406b0b5e392fe92d5813de5054f59016a` (`v0.10.18`)
 Production boundary: port `8137` and `C:\Users\pbirc\.codor` remain untouched until release acceptance.
 
@@ -63,6 +63,11 @@ removed-member attribution; no active assignment option for retired members.
 
 Completion: Backlog, Ready, In progress, In review, Blocked, and Done are
 scannable columns, with compact summaries and expandable governance detail.
+
+Result: complete. Every task renders in exactly one status column; cards keep
+their existing assignment, submit, block, and review mutations while governance
+detail is collapsed by default. The focused build and canonical workflow test
+pass with explicit Ready, In review, and Done column assertions.
 
 ### WP3 - Milestones, advanced controls, and mobile views
 

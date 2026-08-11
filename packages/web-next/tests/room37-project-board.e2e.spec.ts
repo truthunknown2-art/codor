@@ -25,7 +25,7 @@ test('the canonical board survives reload and completes gated work on desktop an
   await milestone.getByLabel('ID').fill('m1');
   await milestone.getByLabel('Title').fill('Release');
   await milestone.getByRole('button', { name: /Milestone/ }).click();
-  await expect(board.getByRole('heading', { name: 'Release' })).toBeVisible();
+  await expect(board.getByLabel('Milestone').locator('option', { hasText: 'Release' })).toHaveCount(1);
 
   const task = board.locator('.nx-project-compose form').filter({ hasText: 'Add task' });
   await task.getByLabel('ID').fill('t1');
@@ -38,6 +38,7 @@ test('the canonical board survives reload and completes gated work on desktop an
 
   const card = board.getByTestId('project-task-t1');
   await expect(card).toContainText('ready');
+  await expect(board.getByRole('region', { name: 'Ready' })).toContainText('Build board');
   await board.getByLabel('Active only').check();
   await expect(card).toBeVisible();
   await board.getByLabel('Active only').uncheck();
@@ -55,12 +56,14 @@ test('the canonical board survives reload and completes gated work on desktop an
   await card.getByPlaceholder('Evidence or blocking note').fill('Verified in the browser');
   await card.getByRole('button', { name: 'Submit' }).click();
   await expect(card).toContainText('in review');
+  await expect(board.getByRole('region', { name: 'In review' })).toContainText('Build Board bridge');
   const working = board.getByRole('region', { name: 'Working now' });
   await expect(working).toContainText('t1 — Build Board bridge');
   await expect(working).toContainText('Review by: @scout · running');
   await expect(working.getByRole('button', { name: /Jump to task/ })).toBeVisible();
   await card.getByRole('button', { name: 'Approve' }).click();
   await expect(card).toContainText('done');
+  await expect(board.getByRole('region', { name: 'Done' })).toContainText('Build Board bridge');
   await expect(working).toContainText('No task is currently in progress, review, or blocked.');
   await expect(board.getByLabel('100% complete')).toBeVisible();
   await board.getByLabel('Active only').check();

@@ -134,6 +134,34 @@ function ProjectView(props: {
         <WorkingNow tasks={workingTasks} members={props.members} />
         <AgentActivity members={props.members} />
       </div>
+      {props.project.milestones.length === 0 ? <p className="nx-project-empty">Add the first milestone to begin.</p> : (
+        <div className="nx-project-board" aria-label="Task workflow">
+          {taskStatuses.filter((status) => !activeOnly || (status !== 'backlog' && status !== 'done')).map((status) => {
+            const tasks = props.project.tasks.filter((task) => task.status === status);
+            return (
+              <section className={`nx-project-column is-${status}`} key={status} aria-labelledby={`project-column-${status}`}>
+                <header><h3 id={`project-column-${status}`}>{taskStatusLabels[status]}</h3><span>{tasks.length}</span></header>
+                <div className="nx-project-tasks">
+                  {tasks.map((task) => (
+                    <TaskCard
+                      key={task.id}
+                      task={task}
+                      milestoneTitle={props.project.milestones.find((milestone) => milestone.id === task.milestone_id)?.title}
+                      project={props.project}
+                      members={props.members}
+                      self={props.self}
+                      canCoordinate={canCoordinate}
+                      mutate={props.mutate}
+                    />
+                  ))}
+                  {tasks.length === 0 && <p className="nx-project-empty">No tasks</p>}
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      )}
+      {activeOnly && activeTasks.length === 0 && <p className="nx-project-empty">No ready, active, review, or blocked tasks.</p>}
       <ProjectSteeringBridge
         project={props.project}
         members={props.members}
@@ -141,34 +169,6 @@ function ProjectView(props: {
         canCoordinate={canCoordinate}
         mutate={props.mutate}
       />
-      <div className="nx-project-board">
-        {props.project.milestones.map((milestone) => {
-          const tasks = props.project.tasks.filter((task) => task.milestone_id === milestone.id
-            && (!activeOnly || activeTasks.includes(task)));
-          if (activeOnly && tasks.length === 0) return null;
-          return (
-            <section className="nx-project-milestone" key={milestone.id}>
-              <header><h3>{milestone.title}</h3><span>{milestone.status}</span></header>
-              <div className="nx-project-tasks">
-                {tasks.map((task) => (
-                <TaskCard
-                  key={task.id}
-                  task={task}
-                  project={props.project}
-                  members={props.members}
-                  self={props.self}
-                  canCoordinate={canCoordinate}
-                  mutate={props.mutate}
-                />
-                ))}
-                {tasks.length === 0 && <p className="nx-project-empty">No tasks yet.</p>}
-              </div>
-            </section>
-          );
-        })}
-        {activeOnly && activeTasks.length === 0 && <p className="nx-project-empty">No ready, active, review, or blocked tasks.</p>}
-        {props.project.milestones.length === 0 && <p className="nx-project-empty">Add the first milestone to begin.</p>}
-      </div>
       {canCoordinate && props.project.status !== 'completed' && props.project.status !== 'archived' && (
         <ProjectComposer project={props.project} members={props.members} mutate={props.mutate} />
       )}
@@ -178,6 +178,15 @@ function ProjectView(props: {
 
 const activeMemberStates = new Set(['running', 'queued', 'awaiting_input', 'custody_uncertain']);
 const taskAnchor = (task: ProjectTask): string => `project-task-${encodeURIComponent(task.id)}`;
+const taskStatuses: ProjectTask['status'][] = ['backlog', 'ready', 'in_progress', 'in_review', 'blocked', 'done'];
+const taskStatusLabels: Record<ProjectTask['status'], string> = {
+  backlog: 'Backlog',
+  ready: 'Ready',
+  in_progress: 'In progress',
+  in_review: 'In review',
+  blocked: 'Blocked',
+  done: 'Done',
+};
 
 function WorkingNow(props: { tasks: ProjectTask[]; members: Member[] }) {
   const byId = new Map(props.members.map((member) => [member.id, member]));
@@ -305,6 +314,7 @@ function ProjectSteeringBridge(props: {
 
 function TaskCard(props: {
   task: ProjectTask;
+  milestoneTitle?: string;
   project: NonNullable<ReturnType<typeof roomSlice>['project']>;
   members: Member[];
   self?: Member;
@@ -326,18 +336,27 @@ function TaskCard(props: {
         {assigned && <Chip name={assigned.display_name || assigned.handle} accent={memberAccent(assigned)} size={28} />}
       </header>
       <p>{props.task.description}</p>
-      <ul>{props.task.acceptance_criteria.map((criterion) => <li key={criterion}>{criterion}</li>)}</ul>
-      {props.task.dependencies.length > 0 && <small>Depends on: {props.task.dependencies.join(', ')}</small>}
-      {props.task.evidence.length > 0 && (
-        <details><summary>{props.task.evidence.length} evidence item(s)</summary><ul>
-          {props.task.evidence.map((evidence, index) => (
-            <li key={index}>{evidence.type === 'commit'
-              ? <>Verified Git commit at submission: <code>{evidence.sha}</code></>
-              : <code>{JSON.stringify(evidence)}</code>}
-            </li>
-          ))}
-        </ul></details>
-      )}
+      <div className="nx-project-task-meta">
+        {props.milestoneTitle && <span>{props.milestoneTitle}</span>}
+        {assigned && <span>@{assigned.handle}</span>}
+        {props.task.gatekeepers.length > 0 && <span>{props.task.gatekeepers.length} gate(s)</span>}
+      </div>
+      <details className="nx-project-task-detail">
+        <summary>View details</summary>
+        <h4>Acceptance criteria</h4>
+        <ul>{props.task.acceptance_criteria.map((criterion) => <li key={criterion}>{criterion}</li>)}</ul>
+        {props.task.dependencies.length > 0 && <small>Depends on: {props.task.dependencies.join(', ')}</small>}
+        {props.task.evidence.length > 0 && (
+          <details><summary>{props.task.evidence.length} evidence item(s)</summary><ul>
+            {props.task.evidence.map((evidence, index) => (
+              <li key={index}>{evidence.type === 'commit'
+                ? <>Verified Git commit at submission: <code>{evidence.sha}</code></>
+                : <code>{JSON.stringify(evidence)}</code>}
+              </li>
+            ))}
+          </ul></details>
+        )}
+      </details>
       {props.canCoordinate && props.task.status !== 'done' && (
         <div className="nx-project-inline">
           <MemberSelect members={props.members.filter((member) => member.kind === 'agent')} value={assignee} onChange={setAssignee} />
