@@ -20,6 +20,7 @@ test('the canonical board survives reload and completes gated work on desktop an
   await expect(board.getByRole('heading', { name: 'Project truth' })).toBeVisible();
   await expect(board.getByLabel('0% complete')).toBeVisible();
   await expect(board.getByRole('complementary', { name: 'Agent activity' })).toContainText('@fable');
+  await board.getByText('Planning tools').click();
 
   const milestone = board.locator('.nx-project-compose form').filter({ hasText: 'Add milestone' });
   await milestone.getByLabel('ID').fill('m1');
@@ -65,7 +66,7 @@ test('the canonical board survives reload and completes gated work on desktop an
   await expect(card).toContainText('done');
   await expect(board.getByRole('region', { name: 'Done' })).toContainText('Build Board bridge');
   await expect(working).toContainText('No task is currently in progress, review, or blocked.');
-  await expect(board.getByLabel('100% complete')).toBeVisible();
+  await expect(board.getByLabel('100% complete', { exact: true })).toBeVisible();
   await board.getByLabel('Active only').check();
   await expect(card).toBeHidden();
   await expect(board).toContainText('No ready, active, review, or blocked tasks.');
@@ -92,5 +93,10 @@ test('the canonical board survives reload and completes gated work on desktop an
   await page.setViewportSize({ width: 320, height: 720 });
   await expect(page.getByTestId('project-board-trigger')).toBeVisible();
   await page.getByTestId('project-board-trigger').click();
+  await expect(page.getByRole('navigation', { name: 'Board views' })).toBeVisible();
+  const mobileBoard = page.getByTestId('project-board');
+  await mobileBoard.getByRole('button', { name: 'Board', exact: true }).click();
   await expect(page.getByTestId('project-task-t1')).toBeVisible();
+  await mobileBoard.getByRole('button', { name: 'Milestones', exact: true }).click();
+  await expect(page.getByLabel('Release 100% complete')).toBeVisible();
 });

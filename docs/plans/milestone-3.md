@@ -1,6 +1,6 @@
 # Milestone 3: Project Board visual command center
 
-Status: approved; WP1-WP2 complete, WP3 in progress
+Status: approved; WP1-WP3 complete, WP4 in progress
 Baseline: `truthunknown2-art/codor@5d46957406b0b5e392fe92d5813de5054f59016a` (`v0.10.18`)
 Production boundary: port `8137` and `C:\Users\pbirc\.codor` remain untouched until release acceptance.
 
@@ -82,6 +82,10 @@ progress counts; Pro export/import; add milestone/task forms.
 Completion: milestone progress is compact and accurate, planning tools are
 progressively disclosed, and mobile uses large touch targets without desktop
 column compression.
+
+Result: complete. Milestones show real completed/total counts, planning and Pro
+controls are behind one disclosure, and mobile provides tested Now, Board, and
+Milestones views over the same canonical state.
 
 ### WP4 - Integration acceptance and safe release
 

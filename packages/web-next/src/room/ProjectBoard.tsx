@@ -81,6 +81,7 @@ function ProjectView(props: {
   mutate(mutation: PendingMutation): void;
 }) {
   const [activeOnly, setActiveOnly] = useState(false);
+  const [mobileView, setMobileView] = useState<'now' | 'board' | 'milestones'>('now');
   const canCoordinate = props.self?.id === props.project.coordinator
     || (props.self?.kind === 'human' && props.self.role === 'owner');
   const complete = props.project.tasks.length > 0 && props.project.tasks.every((task) => task.status === 'done');
@@ -130,12 +131,17 @@ function ProjectView(props: {
         <span>Canonical workflow</span>
         <label className="nx-project-toggle"><input type="checkbox" checked={activeOnly} onChange={(event) => setActiveOnly(event.target.checked)} /> Active only</label>
       </div>
-      <div className="nx-project-command">
-        <WorkingNow tasks={workingTasks} members={props.members} />
-        <AgentActivity members={props.members} />
-      </div>
-      {props.project.milestones.length === 0 ? <p className="nx-project-empty">Add the first milestone to begin.</p> : (
-        <div className="nx-project-board" aria-label="Task workflow">
+      <nav className="nx-project-mobile-nav" aria-label="Board views">
+        {(['now', 'board', 'milestones'] as const).map((view) => <button key={view} type="button" aria-pressed={mobileView === view} onClick={() => setMobileView(view)}>{view === 'now' ? 'Now' : view === 'board' ? 'Board' : 'Milestones'}</button>)}
+      </nav>
+      <section className={`nx-project-mobile-section ${mobileView === 'now' ? 'is-active' : ''}`} data-mobile-view="now">
+        <div className="nx-project-command">
+          <WorkingNow tasks={workingTasks} members={props.members} />
+          <AgentActivity members={props.members} />
+        </div>
+      </section>
+      <section className={`nx-project-mobile-section ${mobileView === 'board' ? 'is-active' : ''}`} data-mobile-view="board">
+        {props.project.milestones.length === 0 ? <p className="nx-project-empty">Add the first milestone to begin.</p> : <div className="nx-project-board" aria-label="Task workflow">
           {taskStatuses.filter((status) => !activeOnly || (status !== 'backlog' && status !== 'done')).map((status) => {
             const tasks = props.project.tasks.filter((task) => task.status === status);
             return (
@@ -159,19 +165,17 @@ function ProjectView(props: {
               </section>
             );
           })}
-        </div>
-      )}
-      {activeOnly && activeTasks.length === 0 && <p className="nx-project-empty">No ready, active, review, or blocked tasks.</p>}
-      <ProjectSteeringBridge
-        project={props.project}
-        members={props.members}
-        retainedMembers={props.retainedMembers}
-        canCoordinate={canCoordinate}
-        mutate={props.mutate}
-      />
-      {canCoordinate && props.project.status !== 'completed' && props.project.status !== 'archived' && (
-        <ProjectComposer project={props.project} members={props.members} mutate={props.mutate} />
-      )}
+        </div>}
+        {activeOnly && activeTasks.length === 0 && <p className="nx-project-empty">No ready, active, review, or blocked tasks.</p>}
+      </section>
+      <section className={`nx-project-mobile-section ${mobileView === 'milestones' ? 'is-active' : ''}`} data-mobile-view="milestones">
+        <MilestoneProgress project={props.project} />
+      </section>
+      <details className="nx-project-planning">
+        <summary>Planning tools</summary>
+        <ProjectSteeringBridge project={props.project} members={props.members} retainedMembers={props.retainedMembers} canCoordinate={canCoordinate} mutate={props.mutate} />
+        {canCoordinate && props.project.status !== 'completed' && props.project.status !== 'archived' && <ProjectComposer project={props.project} members={props.members} mutate={props.mutate} />}
+      </details>
     </>
   );
 }
@@ -232,6 +236,28 @@ function AgentActivity(props: { members: Member[] }) {
         );
       })}
     </aside>
+  );
+}
+
+function MilestoneProgress(props: { project: NonNullable<ReturnType<typeof roomSlice>['project']> }) {
+  return (
+    <section className="nx-project-milestones" aria-labelledby="project-milestones">
+      <header><div><span className="nx-project-kicker">Delivery path</span><h3 id="project-milestones">Milestones</h3></div><span>{props.project.milestones.length} total</span></header>
+      <div>
+        {props.project.milestones.map((milestone, index) => {
+          const tasks = props.project.tasks.filter((task) => task.milestone_id === milestone.id);
+          const done = tasks.filter((task) => task.status === 'done').length;
+          const percent = tasks.length === 0 ? 0 : Math.round((done / tasks.length) * 100);
+          return (
+            <article key={milestone.id}>
+              <span>{index + 1}</span>
+              <div><strong>{milestone.title}</strong><small>{done} / {tasks.length} tasks · {percent}%</small><progress aria-label={`${milestone.title} ${percent}% complete`} value={done} max={Math.max(tasks.length, 1)} /></div>
+            </article>
+          );
+        })}
+        {props.project.milestones.length === 0 && <p className="nx-project-empty">No milestones yet.</p>}
+      </div>
+    </section>
   );
 }
 

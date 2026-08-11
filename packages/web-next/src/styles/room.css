@@ -403,6 +403,8 @@
 .nx-project-agent { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) 0; border-top: 1px solid var(--c-line); }
 .nx-project-agent > span { display: grid; min-width: 0; }
 .nx-project-agent small { color: var(--c-faded); font: var(--t-caption); text-transform: capitalize; }
+.nx-project-mobile-nav { display: none; }
+.nx-project-mobile-section { min-width: 0; }
 .nx-project-board {
   display: grid;
   grid-template-columns: repeat(6, minmax(230px, 1fr));
@@ -429,6 +431,21 @@
 .nx-project-task-detail h4 { margin: var(--sp-2) 0; font: var(--t-caption-strong); }
 .nx-project-task-detail ul { font: var(--t-caption); }
 .nx-project-column .nx-project-empty { padding: var(--sp-3); text-align: center; }
+.nx-project-milestones { padding: var(--sp-3); border: 1px solid var(--c-line); border-radius: var(--r-card); background: var(--c-raised); }
+.nx-project-milestones > header { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); margin-bottom: var(--sp-3); }
+.nx-project-milestones h3 { margin: 2px 0 0; font: var(--t-ui-strong); }
+.nx-project-milestones > header > span { color: var(--c-faded); font: var(--t-caption); }
+.nx-project-milestones > div { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: var(--sp-2); }
+.nx-project-milestones article { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; gap: var(--sp-2); padding: var(--sp-3); border: 1px solid var(--c-line); border-radius: var(--r-control); background: var(--c-surface); }
+.nx-project-milestones article > span { display: grid; place-items: center; width: 24px; height: 24px; border-radius: var(--r-full); background: var(--c-muted); color: var(--c-secondary); font: var(--t-caption-strong); }
+.nx-project-milestones article div { display: grid; grid-template-columns: 1fr auto; gap: 2px var(--sp-2); min-width: 0; }
+.nx-project-milestones article strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nx-project-milestones article small { color: var(--c-faded); font: var(--t-caption); }
+.nx-project-milestones progress { grid-column: 1 / -1; width: 100%; height: 5px; accent-color: var(--c-live); }
+.nx-project-planning { border: 1px solid var(--c-line); border-radius: var(--r-card); background: var(--c-raised); }
+.nx-project-planning > summary { padding: var(--sp-3); cursor: pointer; font: var(--t-ui-strong); }
+.nx-project-planning > .nx-project-steering { margin: 0 var(--sp-3) var(--sp-3); }
+.nx-project-planning > .nx-project-compose { margin: 0 var(--sp-3) var(--sp-3); }
 
 @media (max-width: 1050px) {
   .nx-project-head { grid-template-columns: minmax(0, 1fr) minmax(150px, .4fr) auto auto; }
@@ -450,8 +467,18 @@
   .nx-project-now-list { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(82vw, 1fr); overflow-x: auto; scroll-snap-type: x proximity; }
   .nx-project-now-item { scroll-snap-align: start; }
   .nx-project-toolbar { position: sticky; top: 76px; z-index: 2; }
+  .nx-project-mobile-nav { position: sticky; top: 111px; z-index: 2; display: grid; grid-template-columns: repeat(3, 1fr); padding: 0 var(--sp-3); border-bottom: 1px solid var(--c-line); background: var(--c-surface); }
+  .nx-project-mobile-nav button { min-height: 42px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--c-secondary); font: var(--t-caption-strong); }
+  .nx-project-mobile-nav button[aria-pressed='true'] { border-bottom-color: var(--c-accent); color: var(--c-ink); }
+  .nx-project-mobile-section { display: none; }
+  .nx-project-mobile-section.is-active { display: block; }
   .nx-project-board { grid-template-columns: repeat(6, minmax(82vw, 1fr)); scroll-snap-type: x proximity; }
   .nx-project-column { scroll-snap-align: start; }
+  .nx-project-command { grid-template-columns: 1fr; }
+  .nx-project-agents { display: block; max-height: none; overflow: visible; }
+  .nx-project-agents > header { margin-bottom: var(--sp-2); }
+  .nx-project-agent { border-top: 1px solid var(--c-line); border-left: 0; padding: var(--sp-2) 0; }
+  .nx-project-milestones > div { grid-template-columns: 1fr; }
 }
 
 /* ── Transcript ──────────────────────────────────────────────────────── */
