@@ -18,6 +18,8 @@ test('the canonical board survives reload and completes gated work on desktop an
   await board.getByLabel('Coordinator').selectOption({ label: '@fable' });
   await board.getByRole('button', { name: 'Create project' }).click();
   await expect(board.getByRole('heading', { name: 'Project truth' })).toBeVisible();
+  await expect(board.getByLabel('0% complete')).toBeVisible();
+  await expect(board.getByRole('complementary', { name: 'Agent activity' })).toContainText('@fable');
 
   const milestone = board.locator('.nx-project-compose form').filter({ hasText: 'Add milestone' });
   await milestone.getByLabel('ID').fill('m1');
@@ -59,7 +61,8 @@ test('the canonical board survives reload and completes gated work on desktop an
   await expect(working.getByRole('button', { name: /Jump to task/ })).toBeVisible();
   await card.getByRole('button', { name: 'Approve' }).click();
   await expect(card).toContainText('done');
-  await expect(working).toContainText('No task is currently marked in progress or review.');
+  await expect(working).toContainText('No task is currently in progress, review, or blocked.');
+  await expect(board.getByLabel('100% complete')).toBeVisible();
   await board.getByLabel('Active only').check();
   await expect(card).toBeHidden();
   await expect(board).toContainText('No ready, active, review, or blocked tasks.');
@@ -72,6 +75,7 @@ test('the canonical board survives reload and completes gated work on desktop an
   expect(historicalPacket.tasks[0].gatekeepers).toEqual(['scout']);
   await expect(board.getByLabel('Gatekeeper').locator('option', { hasText: '@scout' })).toHaveCount(0);
 
+  await board.getByText('Project actions').click();
   await board.getByRole('button', { name: 'Complete project' }).click();
   await expect(board).toContainText('completed');
 
