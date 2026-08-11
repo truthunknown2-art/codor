@@ -21,9 +21,10 @@ type PendingMutation = ProjectMutation extends infer Mutation
 export function ProjectBoard(props: { room: string; connection: Connection; onClose: () => void }) {
   const slice = useClientStore((state) => roomSlice(state, props.room));
   const project = slice.project;
-  const members = useMemo(() => Object.values(slice.members)
-    .filter((member) => member.removed_ts === undefined && (member.kind === 'human' || member.kind === 'agent'))
+  const retainedMembers = useMemo(() => Object.values(slice.members)
+    .filter((member) => member.kind === 'human' || member.kind === 'agent')
     .sort((left, right) => left.handle.localeCompare(right.handle)), [slice.members]);
+  const members = useMemo(() => retainedMembers.filter((member) => member.removed_ts === undefined), [retainedMembers]);
   const self = slice.selfMemberId ? slice.members[slice.selfMemberId] : undefined;
   const mutate = (mutation: ProjectMutation): void => props.connection.act({ act: 'project_mutate', mutation });
 
@@ -43,6 +44,7 @@ export function ProjectBoard(props: { room: string; connection: Connection; onCl
         <ProjectView
           project={project}
           members={members}
+          retainedMembers={retainedMembers}
           self={self}
           mutate={(mutation) => mutate({ ...mutation, expected_version: project.version } as ProjectMutation)}
         />
@@ -74,6 +76,7 @@ function ProjectInit(props: {
 function ProjectView(props: {
   project: NonNullable<ReturnType<typeof roomSlice>['project']>;
   members: Member[];
+  retainedMembers: Member[];
   self?: Member;
   mutate(mutation: PendingMutation): void;
 }) {
@@ -114,6 +117,7 @@ function ProjectView(props: {
       <ProjectSteeringBridge
         project={props.project}
         members={props.members}
+        retainedMembers={props.retainedMembers}
         canCoordinate={canCoordinate}
         mutate={props.mutate}
       />
@@ -184,13 +188,14 @@ function WorkingNow(props: { tasks: ProjectTask[]; members: Member[] }) {
 function ProjectSteeringBridge(props: {
   project: NonNullable<ReturnType<typeof roomSlice>['project']>;
   members: Member[];
+  retainedMembers: Member[];
   canCoordinate: boolean;
   mutate(mutation: PendingMutation): void;
 }) {
   const [proposalText, setProposalText] = useState('');
   const [feedback, setFeedback] = useState('');
   const [applying, setApplying] = useState<number>();
-  const packet = useMemo(() => JSON.stringify(projectBoardSnapshot(props.project, props.members), null, 2), [props.project, props.members]);
+  const packet = useMemo(() => JSON.stringify(projectBoardSnapshot(props.project, props.retainedMembers), null, 2), [props.project, props.retainedMembers]);
   useEffect(() => {
     if (applying !== undefined && props.project.steering?.proposal_version === applying) {
       setFeedback(`Applied proposal ${applying}. Board is now v${props.project.version}.`);

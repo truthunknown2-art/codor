@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
 const ROOM = '/?room=eng&token=next-e2e-token';
+const CONTROL = `http://127.0.0.1:${process.env.CODOR_NEXT_E2E_CONTROL_PORT ?? '28138'}`;
 
 async function openRoom(page: Page): Promise<void> {
   await page.goto(ROOM);
@@ -63,6 +64,14 @@ test('the canonical board survives reload and completes gated work on desktop an
   await expect(card).toBeHidden();
   await expect(board).toContainText('No ready, active, review, or blocked tasks.');
   await board.getByLabel('Active only').uncheck();
+
+  const removed = await page.request.post(`${CONTROL}/remove-agent`, { data: { handle: 'scout' } });
+  expect(removed.ok()).toBe(true);
+  await expect(board).toBeVisible();
+  const historicalPacket = JSON.parse(await board.getByLabel('Board packet for Pro').inputValue());
+  expect(historicalPacket.tasks[0].gatekeepers).toEqual(['scout']);
+  await expect(board.getByLabel('Gatekeeper').locator('option', { hasText: '@scout' })).toHaveCount(0);
+
   await board.getByRole('button', { name: 'Complete project' }).click();
   await expect(board).toContainText('completed');
 
