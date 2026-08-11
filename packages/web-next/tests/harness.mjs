@@ -1331,6 +1331,14 @@ createServer((req, res) => {
         daemon.refreshAdapterAvailability();
         payload = { ok: true };
       }
+      if (url.pathname === '/remove-agent') {
+        const body = raw === '' ? {} : JSON.parse(raw);
+        const handle = String(body.handle ?? '');
+        const member = daemon.store.getMemberByHandle('eng', handle);
+        if (!member || member.kind !== 'agent') throw new Error(`no such agent: ${handle}`);
+        daemon.removeMember('eng', member.id);
+        payload = { ok: true };
+      }
       if (url.pathname === '/complete-agent') {
         const body = raw === '' ? {} : JSON.parse(raw);
         const handle = String(body.handle ?? '');
