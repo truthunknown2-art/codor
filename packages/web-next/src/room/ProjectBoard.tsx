@@ -30,22 +30,21 @@ export function ProjectBoard(props: { room: string; connection: Connection; onCl
 
   return (
     <div className="nx-project" data-testid="project-board">
-      <header className="nx-project-head">
-        <div>
-          <span className="nx-project-kicker">Canonical project</span>
-          <h2>{project?.title ?? 'Start a project'}</h2>
-          {project && <p>{project.objective}</p>}
-        </div>
-        <IconButton icon={X} label="Close project board" onClick={props.onClose} />
-      </header>
       {project === undefined ? (
-        <ProjectInit members={members} onSubmit={(input) => mutate({ ...input, op: 'init', expected_version: 0 })} />
+        <>
+          <header className="nx-project-head is-empty">
+            <div><span className="nx-project-kicker">Canonical project</span><h2>Start a project</h2></div>
+            <IconButton icon={X} label="Close project board" onClick={props.onClose} />
+          </header>
+          <ProjectInit members={members} onSubmit={(input) => mutate({ ...input, op: 'init', expected_version: 0 })} />
+        </>
       ) : (
         <ProjectView
           project={project}
           members={members}
           retainedMembers={retainedMembers}
           self={self}
+          onClose={props.onClose}
           mutate={(mutation) => mutate({ ...mutation, expected_version: project.version } as ProjectMutation)}
         />
       )}
@@ -78,102 +77,137 @@ function ProjectView(props: {
   members: Member[];
   retainedMembers: Member[];
   self?: Member;
+  onClose(): void;
   mutate(mutation: PendingMutation): void;
 }) {
   const [activeOnly, setActiveOnly] = useState(false);
+  const [mobileView, setMobileView] = useState<'now' | 'board' | 'milestones'>('now');
   const canCoordinate = props.self?.id === props.project.coordinator
     || (props.self?.kind === 'human' && props.self.role === 'owner');
   const complete = props.project.tasks.length > 0 && props.project.tasks.every((task) => task.status === 'done');
   const activeTasks = props.project.tasks.filter((task) => task.status !== 'backlog' && task.status !== 'done');
-  const workingTasks = activeTasks.filter((task) => task.status === 'in_progress' || task.status === 'in_review');
+  const workingTasks = activeTasks.filter((task) => task.status === 'in_progress' || task.status === 'in_review' || task.status === 'blocked');
+  const doneCount = props.project.tasks.filter((task) => task.status === 'done').length;
+  const progress = props.project.tasks.length === 0 ? 0 : Math.round((doneCount / props.project.tasks.length) * 100);
+  const coordinator = props.retainedMembers.find((member) => member.id === props.project.coordinator);
   return (
     <>
-      <div className="nx-project-meta">
-        <StatusPill tone={props.project.status === 'blocked' ? 'error' : props.project.status === 'completed' ? 'live' : 'neutral'}>
-          {props.project.status.replace('_', ' ')}
-        </StatusPill>
-        <span>v{props.project.version}</span>
-        <span>{props.project.tasks.filter((task) => task.status === 'done').length}/{props.project.tasks.length} done</span>
-        <label className="nx-project-toggle">
-          <input type="checkbox" checked={activeOnly} onChange={(event) => setActiveOnly(event.target.checked)} /> Active only
-        </label>
-        <label className="nx-project-toggle">
-          <input
-            type="checkbox"
-            checked={props.project.guarded_autopilot}
-            disabled={!canCoordinate}
-            onChange={(event) => props.mutate({ op: 'set_autopilot', enabled: event.target.checked })}
-          /> Guarded autopilot
-        </label>
-      </div>
-      {canCoordinate && props.project.status !== 'completed' && props.project.status !== 'archived' && (
-        <div className="nx-project-actions">
-          {props.project.status !== 'active' && <button className="nx-btn" onClick={() => props.mutate({ op: 'set_status', status: 'active' })}>Activate</button>}
-          <button className="nx-btn" onClick={() => props.mutate({ op: 'set_status', status: 'blocked' })}>Block project</button>
-          <button className="nx-btn is-primary" disabled={!complete} onClick={() => props.mutate({ op: 'set_status', status: 'completed' })}>Complete project</button>
+      <header className="nx-project-head">
+        <div className="nx-project-identity">
+          <div className="nx-project-title-line">
+            <span className="nx-project-mark" aria-hidden="true" />
+            <h2>{props.project.title}</h2>
+            <StatusPill tone={props.project.status === 'blocked' ? 'error' : props.project.status === 'completed' ? 'live' : 'neutral'}>{props.project.status.replace('_', ' ')}</StatusPill>
+            <span className="nx-project-version">v{props.project.version}</span>
+          </div>
+          <p>{props.project.objective}</p>
         </div>
-      )}
-      <WorkingNow tasks={workingTasks} members={props.members} />
-      <ProjectSteeringBridge
-        project={props.project}
-        members={props.members}
-        retainedMembers={props.retainedMembers}
-        canCoordinate={canCoordinate}
-        mutate={props.mutate}
-      />
-      <div className="nx-project-board">
-        {props.project.milestones.map((milestone) => {
-          const tasks = props.project.tasks.filter((task) => task.milestone_id === milestone.id
-            && (!activeOnly || activeTasks.includes(task)));
-          if (activeOnly && tasks.length === 0) return null;
-          return (
-            <section className="nx-project-milestone" key={milestone.id}>
-              <header><h3>{milestone.title}</h3><span>{milestone.status}</span></header>
-              <div className="nx-project-tasks">
-                {tasks.map((task) => (
-                <TaskCard
-                  key={task.id}
-                  task={task}
-                  project={props.project}
-                  members={props.members}
-                  self={props.self}
-                  canCoordinate={canCoordinate}
-                  mutate={props.mutate}
-                />
-                ))}
-                {tasks.length === 0 && <p className="nx-project-empty">No tasks yet.</p>}
-              </div>
-            </section>
-          );
-        })}
-        {activeOnly && activeTasks.length === 0 && <p className="nx-project-empty">No ready, active, review, or blocked tasks.</p>}
-        {props.project.milestones.length === 0 && <p className="nx-project-empty">Add the first milestone to begin.</p>}
+        <div className="nx-project-progress" aria-label={`${progress}% complete`}>
+          <span><strong>{progress}%</strong> complete</span>
+          <small>{doneCount} / {props.project.tasks.length} tasks</small>
+          <progress value={doneCount} max={Math.max(props.project.tasks.length, 1)} />
+        </div>
+        <div className="nx-project-coordinator">
+          {coordinator && <Chip name={coordinator.display_name || coordinator.handle} accent={memberAccent(coordinator)} size={36} presence={activeMemberStates.has(coordinator.state ?? 'idle') ? 'live' : 'idle'} surface="raised" />}
+          <span><strong>{coordinator ? `@${coordinator.handle}` : 'Unassigned'}</strong><small>Coordinator</small></span>
+        </div>
+        <label className="nx-project-autopilot">
+          <span><strong>Autopilot</strong><small>{props.project.guarded_autopilot ? 'Running' : 'Paused'}</small></span>
+          <input type="checkbox" checked={props.project.guarded_autopilot} disabled={!canCoordinate} onChange={(event) => props.mutate({ op: 'set_autopilot', enabled: event.target.checked })} />
+        </label>
+        <details className="nx-project-menu">
+          <summary className="nx-btn">Project actions</summary>
+          {canCoordinate && props.project.status !== 'completed' && props.project.status !== 'archived' && (
+            <div>
+              {props.project.status !== 'active' && <button className="nx-btn" onClick={() => props.mutate({ op: 'set_status', status: 'active' })}>Activate</button>}
+              <button className="nx-btn" onClick={() => props.mutate({ op: 'set_status', status: 'blocked' })}>Block project</button>
+              <button className="nx-btn is-primary" disabled={!complete} onClick={() => props.mutate({ op: 'set_status', status: 'completed' })}>Complete project</button>
+            </div>
+          )}
+        </details>
+        <IconButton icon={X} label="Close project board" onClick={props.onClose} />
+      </header>
+      <div className="nx-project-toolbar">
+        <span>Canonical workflow</span>
+        <label className="nx-project-toggle"><input type="checkbox" checked={activeOnly} onChange={(event) => setActiveOnly(event.target.checked)} /> Active only</label>
       </div>
-      {canCoordinate && props.project.status !== 'completed' && props.project.status !== 'archived' && (
-        <ProjectComposer project={props.project} members={props.members} mutate={props.mutate} />
-      )}
+      <nav className="nx-project-mobile-nav" aria-label="Board views">
+        {(['now', 'board', 'milestones'] as const).map((view) => <button key={view} type="button" aria-pressed={mobileView === view} onClick={() => setMobileView(view)}>{view === 'now' ? 'Now' : view === 'board' ? 'Board' : 'Milestones'}</button>)}
+      </nav>
+      <section className={`nx-project-mobile-section ${mobileView === 'now' ? 'is-active' : ''}`} data-mobile-view="now">
+        <div className="nx-project-command">
+          <WorkingNow tasks={workingTasks} members={props.members} />
+          <AgentActivity members={props.members} />
+        </div>
+      </section>
+      <section className={`nx-project-mobile-section ${mobileView === 'board' ? 'is-active' : ''}`} data-mobile-view="board">
+        {props.project.milestones.length === 0 ? <p className="nx-project-empty">Add the first milestone to begin.</p> : <div className="nx-project-board" aria-label="Task workflow">
+          {taskStatuses.filter((status) => !activeOnly || (status !== 'backlog' && status !== 'done')).map((status) => {
+            const tasks = props.project.tasks.filter((task) => task.status === status);
+            return (
+              <section className={`nx-project-column is-${status}`} key={status} aria-labelledby={`project-column-${status}`}>
+                <header><h3 id={`project-column-${status}`}>{taskStatusLabels[status]}</h3><span>{tasks.length}</span></header>
+                <div className="nx-project-tasks">
+                  {tasks.map((task) => (
+                    <TaskCard
+                      key={task.id}
+                      task={task}
+                      milestoneTitle={props.project.milestones.find((milestone) => milestone.id === task.milestone_id)?.title}
+                      project={props.project}
+                      members={props.members}
+                      self={props.self}
+                      canCoordinate={canCoordinate}
+                      mutate={props.mutate}
+                    />
+                  ))}
+                  {tasks.length === 0 && <p className="nx-project-empty">No tasks</p>}
+                </div>
+              </section>
+            );
+          })}
+        </div>}
+        {activeOnly && activeTasks.length === 0 && <p className="nx-project-empty">No ready, active, review, or blocked tasks.</p>}
+      </section>
+      <section className={`nx-project-mobile-section ${mobileView === 'milestones' ? 'is-active' : ''}`} data-mobile-view="milestones">
+        <MilestoneProgress project={props.project} />
+      </section>
+      <details className="nx-project-planning">
+        <summary>Planning tools</summary>
+        <ProjectSteeringBridge project={props.project} members={props.members} retainedMembers={props.retainedMembers} canCoordinate={canCoordinate} mutate={props.mutate} />
+        {canCoordinate && props.project.status !== 'completed' && props.project.status !== 'archived' && <ProjectComposer project={props.project} members={props.members} mutate={props.mutate} />}
+      </details>
     </>
   );
 }
 
 const activeMemberStates = new Set(['running', 'queued', 'awaiting_input', 'custody_uncertain']);
 const taskAnchor = (task: ProjectTask): string => `project-task-${encodeURIComponent(task.id)}`;
+const taskStatuses: ProjectTask['status'][] = ['backlog', 'ready', 'in_progress', 'in_review', 'blocked', 'done'];
+const taskStatusLabels: Record<ProjectTask['status'], string> = {
+  backlog: 'Backlog',
+  ready: 'Ready',
+  in_progress: 'In progress',
+  in_review: 'In review',
+  blocked: 'Blocked',
+  done: 'Done',
+};
 
 function WorkingNow(props: { tasks: ProjectTask[]; members: Member[] }) {
   const byId = new Map(props.members.map((member) => [member.id, member]));
   return (
     <section className="nx-project-now" aria-labelledby="project-working-now">
       <header><div><span className="nx-project-kicker">Live Board state</span><h3 id="project-working-now">Working now</h3></div><span>{props.tasks.length} task(s)</span></header>
-      {props.tasks.length === 0 ? <p>No task is currently marked in progress or review.</p> : (
+      {props.tasks.length === 0 ? <p>No task is currently in progress, review, or blocked.</p> : (
         <div className="nx-project-now-list">
           {props.tasks.map((task) => {
             const assignee = task.assignee ? byId.get(task.assignee) : undefined;
             const gatekeepers = task.gatekeepers.map((id) => byId.get(id)).filter((member): member is Member => member !== undefined);
             const participants = task.status === 'in_review' ? gatekeepers : assignee ? [assignee] : [];
             const mismatch = task.status === 'in_review' && assignee && activeMemberStates.has(assignee.state ?? 'idle');
+            const tone = task.status === 'blocked' ? 'error' : mismatch || task.status === 'in_review' ? 'warn' : 'live';
             return (
-              <button className="nx-project-now-item" key={task.id} type="button" onClick={() => document.getElementById(taskAnchor(task))?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>
-                <span><StatusPill tone={mismatch ? 'warn' : 'live'}>{task.status.replace('_', ' ')}</StatusPill></span>
+              <button className={`nx-project-now-item is-${task.status}`} key={task.id} type="button" onClick={() => document.getElementById(taskAnchor(task))?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>
+                <span><StatusPill tone={tone}>{task.status.replace('_', ' ')}</StatusPill></span>
                 <span className="nx-project-now-copy"><strong>{task.id} — {task.title}</strong><small>{task.status === 'in_review' ? 'Review by' : 'Working agent'}: {participants.length > 0 ? participants.map((member) => `@${member.handle} · ${member.state ?? 'idle'}`).join(', ') : 'unassigned'}</small>{mismatch && <small className="is-warning">State mismatch: @{assignee.handle} is {assignee.state} while this task is marked in review.</small>}</span>
                 <span>Jump to task</span>
               </button>
@@ -181,6 +215,48 @@ function WorkingNow(props: { tasks: ProjectTask[]; members: Member[] }) {
           })}
         </div>
       )}
+    </section>
+  );
+}
+
+function AgentActivity(props: { members: Member[] }) {
+  const agents = [...props.members]
+    .filter((member) => member.kind === 'agent')
+    .sort((left, right) => Number(activeMemberStates.has(right.state ?? 'idle')) - Number(activeMemberStates.has(left.state ?? 'idle')) || left.handle.localeCompare(right.handle));
+  return (
+    <aside className="nx-project-agents" aria-labelledby="project-agent-activity">
+      <header><h3 id="project-agent-activity">Agent activity</h3><span>{agents.filter((member) => activeMemberStates.has(member.state ?? 'idle')).length} active</span></header>
+      {agents.length === 0 ? <p>No agents in this channel.</p> : agents.map((member) => {
+        const active = activeMemberStates.has(member.state ?? 'idle');
+        return (
+          <div className="nx-project-agent" key={member.id}>
+            <Chip name={member.display_name || member.handle} accent={memberAccent(member)} size={30} presence={active ? 'live' : member.state === 'dead' ? 'error' : 'idle'} surface="raised" />
+            <span><strong>@{member.handle}</strong><small>{member.state?.replace('_', ' ') ?? 'idle'}</small></span>
+          </div>
+        );
+      })}
+    </aside>
+  );
+}
+
+function MilestoneProgress(props: { project: NonNullable<ReturnType<typeof roomSlice>['project']> }) {
+  return (
+    <section className="nx-project-milestones" aria-labelledby="project-milestones">
+      <header><div><span className="nx-project-kicker">Delivery path</span><h3 id="project-milestones">Milestones</h3></div><span>{props.project.milestones.length} total</span></header>
+      <div>
+        {props.project.milestones.map((milestone, index) => {
+          const tasks = props.project.tasks.filter((task) => task.milestone_id === milestone.id);
+          const done = tasks.filter((task) => task.status === 'done').length;
+          const percent = tasks.length === 0 ? 0 : Math.round((done / tasks.length) * 100);
+          return (
+            <article key={milestone.id}>
+              <span>{index + 1}</span>
+              <div><strong>{milestone.title}</strong><small>{done} / {tasks.length} tasks · {percent}%</small><progress aria-label={`${milestone.title} ${percent}% complete`} value={done} max={Math.max(tasks.length, 1)} /></div>
+            </article>
+          );
+        })}
+        {props.project.milestones.length === 0 && <p className="nx-project-empty">No milestones yet.</p>}
+      </div>
     </section>
   );
 }
@@ -264,6 +340,7 @@ function ProjectSteeringBridge(props: {
 
 function TaskCard(props: {
   task: ProjectTask;
+  milestoneTitle?: string;
   project: NonNullable<ReturnType<typeof roomSlice>['project']>;
   members: Member[];
   self?: Member;
@@ -285,18 +362,27 @@ function TaskCard(props: {
         {assigned && <Chip name={assigned.display_name || assigned.handle} accent={memberAccent(assigned)} size={28} />}
       </header>
       <p>{props.task.description}</p>
-      <ul>{props.task.acceptance_criteria.map((criterion) => <li key={criterion}>{criterion}</li>)}</ul>
-      {props.task.dependencies.length > 0 && <small>Depends on: {props.task.dependencies.join(', ')}</small>}
-      {props.task.evidence.length > 0 && (
-        <details><summary>{props.task.evidence.length} evidence item(s)</summary><ul>
-          {props.task.evidence.map((evidence, index) => (
-            <li key={index}>{evidence.type === 'commit'
-              ? <>Verified Git commit at submission: <code>{evidence.sha}</code></>
-              : <code>{JSON.stringify(evidence)}</code>}
-            </li>
-          ))}
-        </ul></details>
-      )}
+      <div className="nx-project-task-meta">
+        {props.milestoneTitle && <span>{props.milestoneTitle}</span>}
+        {assigned && <span>@{assigned.handle}</span>}
+        {props.task.gatekeepers.length > 0 && <span>{props.task.gatekeepers.length} gate(s)</span>}
+      </div>
+      <details className="nx-project-task-detail">
+        <summary>View details</summary>
+        <h4>Acceptance criteria</h4>
+        <ul>{props.task.acceptance_criteria.map((criterion) => <li key={criterion}>{criterion}</li>)}</ul>
+        {props.task.dependencies.length > 0 && <small>Depends on: {props.task.dependencies.join(', ')}</small>}
+        {props.task.evidence.length > 0 && (
+          <details><summary>{props.task.evidence.length} evidence item(s)</summary><ul>
+            {props.task.evidence.map((evidence, index) => (
+              <li key={index}>{evidence.type === 'commit'
+                ? <>Verified Git commit at submission: <code>{evidence.sha}</code></>
+                : <code>{JSON.stringify(evidence)}</code>}
+              </li>
+            ))}
+          </ul></details>
+        )}
+      </details>
       {props.canCoordinate && props.task.status !== 'done' && (
         <div className="nx-project-inline">
           <MemberSelect members={props.members.filter((member) => member.kind === 'agent')} value={assignee} onChange={setAssignee} />
