@@ -241,6 +241,11 @@ describe('ack and active member lifecycle storage', () => {
 
     const removed = store.updateMember('eng', agent.id, { removed_ts: new Date().toISOString() });
     expect(store.getMember('eng', agent.id)?.removed_ts).toBe(removed.removed_ts);
+    const lateUpdate = store.updateMember('eng', agent.id, {
+      state: 'idle',
+      removed_ts: undefined,
+    });
+    expect(lateUpdate.removed_ts).toBe(removed.removed_ts);
     expect(store.getMemberByHandle('eng', 'coder')).toBeUndefined();
     expect(store.listMembers('eng').some((member) => member.id === agent.id)).toBe(false);
     expect(store.listMembers('eng', { includeRemoved: true }).some((member) => member.id === agent.id))

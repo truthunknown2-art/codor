@@ -3110,7 +3110,7 @@ describe('failed turns', () => {
   // harn:assume failed-run-details-never-route-as-replies ref=failed-run-daemon-regression
   it('keeps overflow detail on the failed run and never makes it a reply body', async () => {
     const alpha = spawnAgent('alpha');
-    const detail = 'Prompt is too long: context window exceeded';
+    const detail = 'Prompt is too long: 986729 tokens exceed the 1000000 token context window';
     fake.enqueue({ kind: 'complete', final_text: detail, error: detail, status: 'failed' });
     daemon.postHumanMessage('eng', '@alpha continue the incident');
     await daemon.settle();
@@ -3124,6 +3124,31 @@ describe('failed turns', () => {
     expect(daemon.store.listDeliveries('eng').filter((delivery) => delivery.message_id === run.id))
       .toEqual([]);
     expect(daemon.store.getMember('eng', alpha.id)?.state).toBe('dead');
+  });
+
+  it('replaces a Claude agent automatically when context rejects the prompt before tools run', async () => {
+    const alpha = daemon.spawnMember('eng', {
+      harness: 'claude-code', handle: 'claude-alpha', cwd: testCwd(), purpose: 'Implement the assigned board task',
+    });
+    const detail = 'Prompt is too long: 986729 tokens exceed the 1000000 token context window';
+    const compact = vi.spyOn(claudeFake, 'compactSession');
+    const interrupt = vi.spyOn(claudeFake, 'interrupt');
+    claudeFake.enqueue({ kind: 'complete', final_text: detail, error: detail, status: 'failed' });
+    claudeFake.enqueue({ kind: 'complete', final_text: 'recovered from the board and repository' });
+
+    daemon.postHumanMessage('eng', '@claude-alpha continue the incident');
+    await daemon.settle();
+
+    const removed = daemon.store.getMember('eng', alpha.id)!;
+    const replacement = daemon.store.getMemberByHandle('eng', 'claude-alpha')!;
+    expect(removed.removed_ts).toBeDefined();
+    expect(replacement).toMatchObject({
+      handle: 'claude-alpha', harness: 'claude-code', purpose: alpha.purpose, state: 'idle',
+    });
+    expect(replacement.id).not.toBe(alpha.id);
+    expect(claudeFake.deliveries.at(-1)?.payload).toContain('[replacement recovery brief for @claude-alpha]');
+    expect(compact).not.toHaveBeenCalled();
+    expect(interrupt).toHaveBeenCalledTimes(1);
   });
 
   it('keeps partial journal evidence visible without turning a failed root into a reply', async () => {
