@@ -303,6 +303,17 @@ export function applyProjectMutation(
       if (index < 0) {
         tasks.push(candidate);
       } else if (!samePlan(tasks[index]!, candidate)) {
+        const current = tasks[index]!;
+        const clearsRetiredAssignee = current.status === 'done'
+          && current.assignee !== undefined
+          && proposed.assignee === undefined
+          && context.member(current.assignee)?.removed_ts !== undefined
+          && samePlan(current, { ...candidate, assignee: current.assignee });
+        if (clearsRetiredAssignee) {
+          const { assignee: _retired, ...withoutRetiredAssignee } = current;
+          tasks[index] = withoutRetiredAssignee;
+          continue;
+        }
         if (!['backlog', 'ready'].includes(tasks[index]!.status)) {
           throw new Error(`steering cannot edit ${tasks[index]!.status} task ${proposed.id}`);
         }

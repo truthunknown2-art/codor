@@ -70,6 +70,12 @@ test('the canonical board survives reload and completes gated work on desktop an
   await expect(working).toContainText('@scout is working');
   await expect(working).toContainText('This live assignment is not linked to a Board task.');
   await expect(board.getByLabel('100% complete', { exact: true })).toBeVisible();
+  const rejectedPacket = JSON.parse(await board.getByLabel('Board packet for Pro').inputValue());
+  rejectedPacket.pro_steering_template.tasks[0].title = 'Rewrite completed history';
+  await board.getByTestId('pro-steering-input').fill(JSON.stringify(rejectedPacket.pro_steering_template));
+  await board.getByRole('button', { name: 'Apply atomically' }).click();
+  await expect(board.getByRole('status')).toContainText('steering cannot edit done task t1');
+  await expect(board.getByRole('button', { name: 'Apply atomically' })).toBeEnabled();
   await board.getByLabel('Active only').check();
   await expect(card).toBeHidden();
   await expect(board).toContainText('No ready, active, review, or blocked tasks.');
