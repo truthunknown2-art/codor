@@ -3197,14 +3197,20 @@ describe('failed turns', () => {
     expect(daemon.store.getMember('eng', alpha.id)?.state).toBe('dead');
   });
 
-  it('replaces a Claude agent automatically when context rejects the prompt before tools run', async () => {
+  it('replaces a Claude agent automatically when context overflows after tool evidence', async () => {
     const alpha = daemon.spawnMember('eng', {
       harness: 'claude-code', handle: 'claude-alpha', cwd: testCwd(), purpose: 'Implement the assigned board task',
     });
     const detail = 'Prompt is too long: 986729 tokens exceed the 1000000 token context window';
     const compact = vi.spyOn(claudeFake, 'compactSession');
     const interrupt = vi.spyOn(claudeFake, 'interrupt');
-    claudeFake.enqueue({ kind: 'complete', final_text: detail, error: detail, status: 'failed' });
+    claudeFake.enqueue({
+      kind: 'complete', final_text: detail, error: detail, status: 'failed',
+      items: [{
+        type: 'run.item', item_type: 'tool_call',
+        payload: { call_id: 'verify-1', tool: 'shell', title: 'Verify board state' },
+      }],
+    });
     claudeFake.enqueue({ kind: 'complete', final_text: 'recovered from the board and repository' });
 
     daemon.postHumanMessage('eng', '@claude-alpha continue the incident');
@@ -3212,6 +3218,9 @@ describe('failed turns', () => {
 
     const removed = daemon.store.getMember('eng', alpha.id)!;
     const replacement = daemon.store.getMemberByHandle('eng', 'claude-alpha')!;
+    expect(removed.failure).toMatchObject({
+      summary: detail, resume_capability: 'replace', recommended_action: 'replace_and_continue',
+    });
     expect(removed.removed_ts).toBeDefined();
     expect(replacement).toMatchObject({
       handle: 'claude-alpha', harness: 'claude-code', purpose: alpha.purpose, state: 'idle',
@@ -3220,6 +3229,31 @@ describe('failed turns', () => {
     expect(claudeFake.deliveries.at(-1)?.payload).toContain('[replacement recovery brief for @claude-alpha]');
     expect(compact).not.toHaveBeenCalled();
     expect(interrupt).toHaveBeenCalledTimes(1);
+  });
+
+  it('replaces a persisted exhausted Claude agent during boot recovery', async () => {
+    const alpha = daemon.spawnMember('eng', {
+      harness: 'claude-code', handle: 'claude-alpha', cwd: testCwd(), purpose: 'Continue from the board',
+    });
+    daemon.store.updateMember('eng', alpha.id, {
+      state: 'dead',
+      failure: {
+        code: 'turn_failed', summary: 'Prompt is too long', ts: new Date().toISOString(),
+        resume_capability: 'native', recommended_action: 'revive',
+      },
+    });
+    await daemon.close();
+    daemon = newDaemon();
+    claudeFake.enqueue({ kind: 'complete', final_text: 'continued safely from the recovery brief' });
+
+    await daemon.reconcile();
+    await daemon.settle();
+
+    expect(daemon.store.getMember('eng', alpha.id)?.removed_ts).toBeDefined();
+    const replacement = daemon.store.getMemberByHandle('eng', 'claude-alpha')!;
+    expect(replacement.id).not.toBe(alpha.id);
+    expect(replacement).toMatchObject({ state: 'idle', purpose: alpha.purpose });
+    expect(claudeFake.deliveries.at(-1)?.payload).toContain('[replacement recovery brief for @claude-alpha]');
   });
 
   it('keeps partial journal evidence visible without turning a failed root into a reply', async () => {
