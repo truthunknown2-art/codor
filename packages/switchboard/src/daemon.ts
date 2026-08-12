@@ -1851,6 +1851,25 @@ export class Daemon {
       : { resume_capability: 'replace', recommended_action: 'replace_and_continue' };
   }
 
+  private isClaudeContextOverflow(member: Pick<Member, 'harness'>, summary: string | undefined): boolean {
+    return member.harness === 'claude-code' && /\bprompt is too long\b/i.test(summary ?? '');
+  }
+
+  private async autoReplaceClaudeContextOverflow(room: string, member: Member): Promise<void> {
+    this.postSystemMessage(
+      room,
+      `@${member.handle} exhausted Claude's context; Codor is replacing it with fresh context and a recovery brief without replaying the uncertain turn.`,
+    );
+    try {
+      await this.replaceMemberAndContinue(room, member.id);
+    } catch (error) {
+      this.postSystemMessage(
+        room,
+        `Automatic replacement for @${member.handle} failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   private failMember(
     room: string,
     member: Member,
@@ -4547,16 +4566,17 @@ export class Daemon {
     const day = new Date().toISOString().slice(0, 10);
     const currentMember = this.store.getMember(room, memberId);
     const autoReplaceContextOverflow = completion.status === 'failed'
-      && currentMember?.harness === 'claude-code'
-      && toolCalls === 0
-      && /\bprompt is too long\b/i.test(failure ?? '');
+      && currentMember !== undefined
+      && this.isClaudeContextOverflow(currentMember, failure);
     const durableFailure = completion.status === 'failed' && !recoverableFailure && currentMember !== undefined
       ? {
           code: 'turn_failed' as const,
           summary: (failure ?? 'agent turn failed').slice(0, 4_000),
           run_message_id: runMsgId,
           ts: endedTs,
-          ...this.recoveryFor(room, currentMember),
+          ...(autoReplaceContextOverflow
+            ? { resume_capability: 'replace' as const, recommended_action: 'replace_and_continue' as const }
+            : this.recoveryFor(room, currentMember)),
         }
       : undefined;
     const completed = this.store.completeTurn(room, {
@@ -4640,20 +4660,7 @@ export class Daemon {
     if (completion.status === 'failed' && !recoverableFailure) {
       this.blockDeadProjectAssignee(room, completed.member);
       if (autoReplaceContextOverflow) {
-        this.postSystemMessage(
-          room,
-          `@${completed.member.handle} exhausted Claude's context before running any tools; Codor is replacing it with fresh context and a recovery brief.`,
-        );
-        this.track((async () => {
-          try {
-            await this.replaceMemberAndContinue(room, completed.member.id);
-          } catch (error) {
-            this.postSystemMessage(
-              room,
-              `Automatic replacement for @${completed.member.handle} failed: ${error instanceof Error ? error.message : String(error)}`,
-            );
-          }
-        })());
+        this.track(this.autoReplaceClaudeContextOverflow(room, completed.member));
       } else {
         this.postSystemMessage(
           room,
@@ -5185,6 +5192,16 @@ export class Daemon {
       // harn:end lifecycle-retries-only-live-collaboration-work
       this.reconcileCollaborationGroups(room.id);
       this.reconcileProjectAutomation(room.id);
+      for (const member of this.store.listMembers(room.id)) {
+        if (
+          member.kind === 'agent'
+          && member.removed_ts === undefined
+          && member.state === 'dead'
+          && this.isClaudeContextOverflow(member, member.failure?.summary)
+        ) {
+          await this.autoReplaceClaudeContextOverflow(room.id, member);
+        }
+      }
       // drain anything still queued (tracked — a turn may block on an ask)
       for (const member of this.store.listMembers(room.id)) {
         if (member.kind === 'agent') this.track(this.maybeStartTurn(room.id, member.id));
