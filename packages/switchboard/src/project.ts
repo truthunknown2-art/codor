@@ -303,12 +303,34 @@ export function applyProjectMutation(
       if (index < 0) {
         tasks.push(candidate);
       } else if (!samePlan(tasks[index]!, candidate)) {
-        if (!['backlog', 'ready'].includes(tasks[index]!.status)) {
+        const current = tasks[index]!;
+        const preservesHistoricalAssignee = current.status === 'done'
+          && current.assignee !== undefined
+          && proposed.assignee !== undefined
+          && context.member(current.assignee)?.removed_ts !== undefined
+          && context.member(current.assignee)?.handle === context.member(proposed.assignee)?.handle
+          && samePlan(current, { ...candidate, assignee: current.assignee });
+        if (preservesHistoricalAssignee) continue;
+        const clearsRetiredAssignee = current.status === 'done'
+          && current.assignee !== undefined
+          && proposed.assignee === undefined
+          && context.member(current.assignee)?.removed_ts !== undefined
+          && samePlan(current, { ...candidate, assignee: current.assignee });
+        if (clearsRetiredAssignee) {
+          const { assignee: _retired, ...withoutRetiredAssignee } = current;
+          tasks[index] = withoutRetiredAssignee;
+          continue;
+        }
+        if (!['backlog', 'ready', 'blocked'].includes(tasks[index]!.status)) {
           throw new Error(`steering cannot edit ${tasks[index]!.status} task ${proposed.id}`);
         }
         tasks[index] = {
           ...tasks[index]!,
           ...proposed,
+          ...(current.status === 'blocked' && {
+            status: 'ready' as const,
+            revision: current.revision + 1,
+          }),
         };
       }
     }

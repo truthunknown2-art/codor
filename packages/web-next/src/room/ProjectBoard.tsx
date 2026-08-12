@@ -9,7 +9,7 @@ import {
   type ProjectTask,
 } from '@codor/protocol';
 import { Check, Plus, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { roomSlice, useClientStore } from '../app/store.js';
 import { Chip, IconButton, StatusPill } from '../primitives/primitives.js';
@@ -316,13 +316,22 @@ function ProjectSteeringBridge(props: {
   const [proposalText, setProposalText] = useState('');
   const [feedback, setFeedback] = useState('');
   const [applying, setApplying] = useState<number>();
+  const errors = useClientStore((state) => roomSlice(state, props.project.room).errors);
+  const applyStartedAt = useRef<number>();
   const packet = useMemo(() => JSON.stringify(projectBoardSnapshot(props.project, props.retainedMembers), null, 2), [props.project, props.retainedMembers]);
   useEffect(() => {
-    if (applying !== undefined && props.project.steering?.proposal_version === applying) {
+    if (applying === undefined || applyStartedAt.current === undefined) return;
+    if (errors.length > applyStartedAt.current) {
+      setFeedback(errors[errors.length - 1] ?? `Proposal ${applying} was rejected.`);
+      setApplying(undefined);
+      applyStartedAt.current = undefined;
+    } else if (props.project.steering?.proposal_version === applying) {
       setFeedback(`Applied proposal ${applying}. Board is now v${props.project.version}.`);
       setApplying(undefined);
+      setProposalText('');
+      applyStartedAt.current = undefined;
     }
-  }, [applying, props.project.steering?.proposal_version, props.project.version]);
+  }, [applying, errors, props.project.steering?.proposal_version, props.project.version]);
   const parse = () => {
     const proposal = ProjectSteeringProposalSchema.parse(JSON.parse(proposalText));
     if (proposal.based_on_board_version !== props.project.version) {
@@ -345,9 +354,10 @@ function ProjectSteeringBridge(props: {
     try {
       const { proposal, mutation } = parse();
       const { expected_version: _expected, ...pending } = mutation;
-      props.mutate(pending as PendingMutation);
+      applyStartedAt.current = errors.length;
       setApplying(proposal.proposal_version);
       setFeedback(`Applying proposal ${proposal.proposal_version}…`);
+      props.mutate(pending as PendingMutation);
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : String(error));
     }
@@ -373,8 +383,8 @@ function ProjectSteeringBridge(props: {
             setFeedback('');
           }} /></label>
           <div className="nx-project-actions">
-            <button className="nx-btn" type="button" disabled={!proposalText.trim()} onClick={preview}>Preview</button>
-            <button className="nx-btn is-primary" type="button" disabled={!proposalText.trim()} onClick={apply}>Apply atomically</button>
+            <button className="nx-btn" type="button" disabled={applying !== undefined || !proposalText.trim()} onClick={preview}>Preview</button>
+            <button className="nx-btn is-primary" type="button" disabled={applying !== undefined || !proposalText.trim()} onClick={apply}>Apply atomically</button>
           </div>
         </>
       )}
