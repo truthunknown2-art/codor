@@ -2,7 +2,9 @@ import {
   ProjectSteeringProposalSchema,
   projectBoardSnapshot,
   projectSteeringMutation,
+  type Delivery,
   type Member,
+  type Message,
   type ProjectMutation,
   type ProjectTask,
 } from '@codor/protocol';
@@ -41,7 +43,9 @@ export function ProjectBoard(props: { room: string; connection: Connection; onCl
       ) : (
         <ProjectView
           project={project}
+          deliveries={Object.values(slice.inbox)}
           members={members}
+          messages={Object.values(slice.messages)}
           retainedMembers={retainedMembers}
           self={self}
           onClose={props.onClose}
@@ -74,7 +78,9 @@ function ProjectInit(props: {
 
 function ProjectView(props: {
   project: NonNullable<ReturnType<typeof roomSlice>['project']>;
+  deliveries: Delivery[];
   members: Member[];
+  messages: Message[];
   retainedMembers: Member[];
   self?: Member;
   onClose(): void;
@@ -86,7 +92,8 @@ function ProjectView(props: {
     || (props.self?.kind === 'human' && props.self.role === 'owner');
   const complete = props.project.tasks.length > 0 && props.project.tasks.every((task) => task.status === 'done');
   const activeTasks = props.project.tasks.filter((task) => task.status !== 'backlog' && task.status !== 'done');
-  const workingTasks = activeTasks.filter((task) => task.status === 'in_progress' || task.status === 'in_review' || task.status === 'blocked');
+  const workingTasks = workingBoardTasks(activeTasks, props.deliveries);
+  const unlinkedDeliveries = unlinkedAgentWork(props.project.tasks, props.deliveries, props.members);
   const doneCount = props.project.tasks.filter((task) => task.status === 'done').length;
   const progress = props.project.tasks.length === 0 ? 0 : Math.round((doneCount / props.project.tasks.length) * 100);
   const coordinator = props.retainedMembers.find((member) => member.id === props.project.coordinator);
@@ -136,7 +143,7 @@ function ProjectView(props: {
       </nav>
       <section className={`nx-project-mobile-section ${mobileView === 'now' ? 'is-active' : ''}`} data-mobile-view="now">
         <div className="nx-project-command">
-          <WorkingNow tasks={workingTasks} members={props.members} />
+          <WorkingNow tasks={workingTasks} unlinkedDeliveries={unlinkedDeliveries} deliveries={props.deliveries} messages={props.messages} members={props.members} />
           <AgentActivity members={props.members} />
         </div>
       </section>
@@ -192,12 +199,34 @@ const taskStatusLabels: Record<ProjectTask['status'], string> = {
   done: 'Done',
 };
 
-function WorkingNow(props: { tasks: ProjectTask[]; members: Member[] }) {
+export function workingBoardTasks(tasks: ProjectTask[], deliveries: Delivery[]): ProjectTask[] {
+  const deliveryStates = new Map(deliveries.map((delivery) => [delivery.id, delivery.state]));
+  return tasks.filter((task) => {
+    if (task.status === 'in_progress' || task.status === 'in_review' || task.status === 'blocked') return true;
+    if (task.status !== 'ready') return false;
+    return task.dispatches?.work.some((dispatch) => dispatch.revision === task.revision
+      && ['queued', 'delivering', 'held'].includes(deliveryStates.get(dispatch.delivery_id) ?? '')) ?? false;
+  });
+}
+
+export function unlinkedAgentWork(tasks: ProjectTask[], deliveries: Delivery[], members: Member[]): Delivery[] {
+  const agents = new Set(members.filter((member) => member.kind === 'agent').map((member) => member.id));
+  const linked = new Set(tasks.flatMap((task) => [
+    ...(task.dispatches?.work.map((dispatch) => dispatch.delivery_id) ?? []),
+    ...(task.dispatches?.reviews.map((dispatch) => dispatch.delivery_id) ?? []),
+  ]));
+  return deliveries.filter((delivery) => delivery.state === 'delivering' && agents.has(delivery.recipient) && !linked.has(delivery.id));
+}
+
+function WorkingNow(props: { tasks: ProjectTask[]; unlinkedDeliveries: Delivery[]; deliveries: Delivery[]; messages: Message[]; members: Member[] }) {
   const byId = new Map(props.members.map((member) => [member.id, member]));
+  const deliveryById = new Map(props.deliveries.map((delivery) => [delivery.id, delivery]));
+  const messageById = new Map(props.messages.map((message) => [message.id, message]));
+  const itemCount = props.tasks.length + props.unlinkedDeliveries.length;
   return (
     <section className="nx-project-now" aria-labelledby="project-working-now">
-      <header><div><span className="nx-project-kicker">Live Board state</span><h3 id="project-working-now">Working now</h3></div><span>{props.tasks.length} task(s)</span></header>
-      {props.tasks.length === 0 ? <p>No task is currently in progress, review, or blocked.</p> : (
+      <header><div><span className="nx-project-kicker">Live Board state</span><h3 id="project-working-now">Working now</h3></div><span>{itemCount} item(s)</span></header>
+      {itemCount === 0 ? <p>No Board task or agent delivery is currently active.</p> : (
         <div className="nx-project-now-list">
           {props.tasks.map((task) => {
             const assignee = task.assignee ? byId.get(task.assignee) : undefined;
@@ -205,12 +234,28 @@ function WorkingNow(props: { tasks: ProjectTask[]; members: Member[] }) {
             const participants = task.status === 'in_review' ? gatekeepers : assignee ? [assignee] : [];
             const mismatch = task.status === 'in_review' && assignee && activeMemberStates.has(assignee.state ?? 'idle');
             const tone = task.status === 'blocked' ? 'error' : mismatch || task.status === 'in_review' ? 'warn' : 'live';
+            const workDelivery = task.dispatches?.work.find((dispatch) => dispatch.revision === task.revision);
+            const deliveryState = workDelivery ? deliveryById.get(workDelivery.delivery_id)?.state : undefined;
+            const statusLabel = task.status === 'ready' && deliveryState
+              ? deliveryState === 'delivering' ? 'starting' : deliveryState
+              : task.status.replace('_', ' ');
             return (
               <button className={`nx-project-now-item is-${task.status}`} key={task.id} type="button" onClick={() => document.getElementById(taskAnchor(task))?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>
-                <span><StatusPill tone={tone}>{task.status.replace('_', ' ')}</StatusPill></span>
+                <span><StatusPill tone={tone}>{statusLabel}</StatusPill></span>
                 <span className="nx-project-now-copy"><strong>{task.id} — {task.title}</strong><small>{task.status === 'in_review' ? 'Review by' : 'Working agent'}: {participants.length > 0 ? participants.map((member) => `@${member.handle} · ${member.state ?? 'idle'}`).join(', ') : 'unassigned'}</small>{mismatch && <small className="is-warning">State mismatch: @{assignee.handle} is {assignee.state} while this task is marked in review.</small>}</span>
                 <span>Jump to task</span>
               </button>
+            );
+          })}
+          {props.unlinkedDeliveries.map((delivery) => {
+            const recipient = byId.get(delivery.recipient);
+            const source = messageById.get(delivery.message_id);
+            return (
+              <article className="nx-project-now-item is-unlinked" key={delivery.id}>
+                <span><StatusPill tone="warn">outside Board</StatusPill></span>
+                <span className="nx-project-now-copy"><strong>@{recipient?.handle ?? 'agent'} is working</strong><small>{source?.body ?? `Delivery ${delivery.id}`}</small><small className="is-warning">This live assignment is not linked to a Board task.</small></span>
+                <span>Live chat work</span>
+              </article>
             );
           })}
         </div>

@@ -65,7 +65,10 @@ test('the canonical board survives reload and completes gated work on desktop an
   await card.getByRole('button', { name: 'Approve' }).click();
   await expect(card).toContainText('done');
   await expect(board.getByRole('region', { name: 'Done' })).toContainText('Build Board bridge');
-  await expect(working).toContainText('No task is currently in progress, review, or blocked.');
+  await expect(working.locator('.nx-project-now-item.is-unlinked')).toHaveCount(2);
+  await expect(working).toContainText('@muse is working');
+  await expect(working).toContainText('@scout is working');
+  await expect(working).toContainText('This live assignment is not linked to a Board task.');
   await expect(board.getByLabel('100% complete', { exact: true })).toBeVisible();
   await board.getByLabel('Active only').check();
   await expect(card).toBeHidden();

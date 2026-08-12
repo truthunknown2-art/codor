@@ -184,6 +184,77 @@ describe('guarded project delivery automation', () => {
     return { planner, coder, reviewer, project };
   }
 
+  it('adopts one explicit task-id chat delivery instead of dispatching duplicate Board work', () => {
+    const planner = spawnAgent('planner-chat');
+    const coder = spawnAgent('coder-chat');
+    const reviewer = spawnAgent('reviewer-chat');
+    daemon.pauseMember('eng', planner.id);
+    daemon.pauseMember('eng', coder.id);
+    daemon.pauseMember('eng', reviewer.id);
+    let project = daemon.mutateProject('eng', planner.id, {
+      op: 'init', expected_version: 0, title: 'Ship', objective: 'Keep chat and Board coherent',
+      coordinator: planner.id, guarded_autopilot: false,
+    });
+    project = daemon.mutateProject('eng', planner.id, {
+      op: 'add_milestone', expected_version: project.version, id: 'm1', title: 'Build',
+    });
+    project = daemon.mutateProject('eng', planner.id, {
+      op: 'add_task', expected_version: project.version, id: 'R1-VOICE-FIX', milestone_id: 'm1',
+      title: 'Fix narration', description: 'Finish the bounded correction',
+      acceptance_criteria: ['evidence recorded'], dependencies: [], assignee: coder.id,
+      gatekeepers: [reviewer.id], workspace_mode: 'write',
+    });
+    project = daemon.mutateProject('eng', planner.id, {
+      op: 'set_status', expected_version: project.version, status: 'active',
+    });
+
+    const message = daemon.postAgentMessage(
+      'eng', planner.id, '@coder-chat finish R1-VOICE-FIX and record the evidence',
+    );
+    project = daemon.store.getProject('eng')!;
+    const routed = daemon.store.listDeliveries('eng', { recipient: coder.id })
+      .find((delivery) => delivery.message_id === message.id)!;
+    expect(project.tasks[0]?.dispatches?.work).toEqual([{
+      revision: 0, delivery_id: routed.id,
+    }]);
+
+    project = daemon.mutateProject('eng', planner.id, {
+      op: 'set_autopilot', expected_version: project.version, enabled: true,
+    });
+    expect(project.tasks[0]?.dispatches?.work).toHaveLength(1);
+    expect(daemon.store.listDeliveries('eng', { recipient: coder.id })).toHaveLength(1);
+  });
+
+  it('keeps ambiguous coordinator chat outside the Board', () => {
+    const planner = spawnAgent('planner-chat');
+    const coder = spawnAgent('coder-chat');
+    daemon.pauseMember('eng', planner.id);
+    daemon.pauseMember('eng', coder.id);
+    let project = daemon.mutateProject('eng', planner.id, {
+      op: 'init', expected_version: 0, title: 'Ship', objective: 'Preserve ordinary chat',
+      coordinator: planner.id, guarded_autopilot: false,
+    });
+    project = daemon.mutateProject('eng', planner.id, {
+      op: 'add_milestone', expected_version: project.version, id: 'm1', title: 'Build',
+    });
+    project = daemon.mutateProject('eng', planner.id, {
+      op: 'add_task', expected_version: project.version, id: 'T-1', milestone_id: 'm1',
+      title: 'First', description: 'First task', acceptance_criteria: ['done'], dependencies: [],
+      assignee: coder.id, gatekeepers: [], workspace_mode: 'read_only',
+    });
+    project = daemon.mutateProject('eng', planner.id, {
+      op: 'add_task', expected_version: project.version, id: 'T-2', milestone_id: 'm1',
+      title: 'Second', description: 'Second task', acceptance_criteria: ['done'], dependencies: [],
+      assignee: coder.id, gatekeepers: [], workspace_mode: 'read_only',
+    });
+    project = daemon.mutateProject('eng', planner.id, {
+      op: 'set_status', expected_version: project.version, status: 'active',
+    });
+
+    daemon.postAgentMessage('eng', planner.id, '@coder-chat please check the narration status');
+    expect(daemon.store.getProject('eng')?.tasks.every((task) => task.dispatches === undefined)).toBe(true);
+  });
+
   it('serializes write tasks per working directory while read-only work remains concurrent', async () => {
     const shared = testCwd('shared-writes');
     const planner = spawnAgent('planner-lock', shared);
