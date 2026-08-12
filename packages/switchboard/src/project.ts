@@ -73,8 +73,12 @@ function validateTasks(context: ProjectMutationContext, tasks: ProjectTask[]): v
     if (task.workspace_mode === 'write' && task.gatekeepers.length === 0) {
       throw new Error(`write task ${task.id} requires at least one gatekeeper`);
     }
-    if (task.assignee) activeMember(context, task.assignee, `assignee for ${task.id}`);
-    for (const gatekeeper of task.gatekeepers) activeMember(context, gatekeeper, `gatekeeper for ${task.id}`);
+    // Completed work is immutable history. Its recorded participants may later
+    // leave the room; that must not freeze unrelated current Board mutations.
+    if (task.status !== 'done') {
+      if (task.assignee) activeMember(context, task.assignee, `assignee for ${task.id}`);
+      for (const gatekeeper of task.gatekeepers) activeMember(context, gatekeeper, `gatekeeper for ${task.id}`);
+    }
   }
   const byId = new Map(tasks.map((task) => [task.id, task]));
   const visiting = new Set<string>();
