@@ -1401,6 +1401,7 @@ export interface AtomicRoutedMessage {
   deliveries: Delivery[];
   member?: Member;
   collaboration?: CollaborationRoundProjection;
+  project?: ProjectDocument;
 }
 
 export interface AtomicProjectDispatch {
@@ -2369,6 +2370,7 @@ export class Store {
     opts: {
       message: NewMessage;
       plan(message: Message): RoutedMessagePlan;
+      afterDeliveries?(message: Message, deliveries: Delivery[]): ProjectDocument | undefined;
     },
   ): AtomicRoutedMessage {
     return this.db.transaction(() => {
@@ -2392,7 +2394,8 @@ export class Store {
             participants: plan.collaboration.participants,
           });
       if (collaboration) deliveries.push(...collaboration.deliveries);
-      return { message, deliveries, member, collaboration };
+      const project = opts.afterDeliveries?.(message, deliveries);
+      return { message, deliveries, member, collaboration, project };
     })();
   }
   // harn:end eligible-multi-agent-routing-starts-one-group

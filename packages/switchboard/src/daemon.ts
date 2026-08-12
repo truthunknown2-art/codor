@@ -3002,11 +3002,56 @@ export class Daemon {
         awaitingReply,
         !interim,
       ).plan,
+      afterDeliveries: (message, deliveries) =>
+        this.adoptExplicitProjectDelivery(room, message, deliveries),
     });
     this.emitMessage(room, committed.message);
     if (committed.member) this.emitMember(room, committed.member);
+    if (committed.project) this.emitProject(committed.project);
     this.dispatchCreatedDeliveries(room, committed.deliveries);
     return committed.message;
+  }
+
+  /** A coordinator/owner may dispatch a ready Board task in ordinary chat, but
+   * only when the message names one exact task id and routes to its assignee.
+   * Linking that existing delivery prevents guarded automation from creating a
+   * second copy of the same work. Ambiguous chat remains ordinary chat. */
+  private adoptExplicitProjectDelivery(
+    room: string,
+    message: Message,
+    deliveries: Delivery[],
+  ): ProjectDocument | undefined {
+    const project = this.store.getProject(room);
+    const author = this.store.getMember(room, message.author);
+    if (
+      !project || project.status !== 'active' ||
+      (author?.id !== project.coordinator && !(author?.kind === 'human' && author.role === 'owner'))
+    ) return undefined;
+
+    const agents = deliveries.filter((delivery) =>
+      this.store.getMember(room, delivery.recipient)?.kind === 'agent');
+    if (agents.length !== 1) return undefined;
+    const delivery = agents[0]!;
+    const matches = project.tasks.filter((task) => {
+      if (task.status !== 'ready' || task.assignee !== delivery.recipient) return false;
+      if (task.dispatches?.work.some((work) => work.revision === task.revision)) return false;
+      const escaped = task.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return new RegExp(`(^|[^A-Za-z0-9_-])${escaped}([^A-Za-z0-9_-]|$)`, 'i').test(message.body);
+    });
+    if (matches.length !== 1) return undefined;
+    const task = matches[0]!;
+    return this.store.saveProject(this.projectInput(project, project.tasks.map((candidate) => candidate.id === task.id
+      ? {
+          ...candidate,
+          dispatches: {
+            work: [...(candidate.dispatches?.work ?? []), {
+              revision: candidate.revision,
+              delivery_id: delivery.id,
+            }],
+            reviews: candidate.dispatches?.reviews ?? [],
+          },
+        }
+      : candidate)), project.version);
   }
 
   postHumanMessage(

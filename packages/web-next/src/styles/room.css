@@ -395,6 +395,7 @@
 .nx-project-now-item.is-in_progress { border-color: color-mix(in srgb, var(--c-accent) 60%, var(--c-line)); background: color-mix(in srgb, var(--c-accent-tint) 32%, var(--c-surface)); }
 .nx-project-now-item.is-in_review { border-color: var(--c-warn); background: color-mix(in srgb, var(--c-warn-tint) 38%, var(--c-surface)); }
 .nx-project-now-item.is-blocked { border-color: var(--c-error); background: color-mix(in srgb, var(--c-error-tint) 42%, var(--c-surface)); }
+.nx-project-now-item.is-unlinked { border-color: var(--c-warn); background: color-mix(in srgb, var(--c-warn-tint) 38%, var(--c-surface)); cursor: default; }
 .nx-project-now-item > span:last-child { justify-self: end; align-self: end; }
 .nx-project-agents { max-height: 240px; padding: var(--sp-3); overflow-y: auto; border: 1px solid var(--c-line-strong); border-radius: var(--r-card); background: var(--c-raised); }
 .nx-project-agents > header { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); margin-bottom: var(--sp-2); }
