@@ -130,6 +130,35 @@ describe('canonical project mutations', () => {
     }).status).toBe('completed');
   });
 
+  it('keeps completed task participants as history after they leave the room', () => {
+    let project = initialized();
+    project = mutate(project, PLANNER, { op: 'add_milestone', expected_version: 1, id: 'm1', title: 'Build' });
+    project = mutate(project, PLANNER, {
+      op: 'add_task', expected_version: 2, id: 'old', milestone_id: 'm1', title: 'Past work', description: 'Done',
+      acceptance_criteria: ['Pass'], dependencies: [], assignee: CODER,
+      gatekeepers: [REVIEWER], workspace_mode: 'write',
+    });
+    project = mutate(project, CODER, {
+      op: 'submit', expected_version: 3, task_id: 'old', evidence: [{ type: 'note', text: 'complete' }],
+    });
+    project = mutate(project, REVIEWER, {
+      op: 'review', expected_version: 4, task_id: 'old', decision: 'approved',
+    });
+    members[CODER] = { ...members[CODER]!, removed_ts: TS };
+    try {
+      expect(mutate(project, PLANNER, {
+        op: 'add_task', expected_version: 5, id: 'new', milestone_id: 'm1', title: 'Current work',
+        description: 'Continue', acceptance_criteria: ['Pass'], dependencies: [],
+        gatekeepers: [], workspace_mode: 'read_only',
+      }).tasks).toMatchObject([
+        { id: 'old', status: 'done', assignee: CODER },
+        { id: 'new', status: 'ready' },
+      ]);
+    } finally {
+      delete members[CODER]!.removed_ts;
+    }
+  });
+
   it('atomically reconciles fresh steering while protecting active work', () => {
     let project = initialized();
     project = mutate(project, PLANNER, { op: 'add_milestone', expected_version: 1, id: 'm1', title: 'Build' });
