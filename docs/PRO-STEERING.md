@@ -9,11 +9,16 @@ Open **Board → Pro steering bridge**, copy the Board packet, and give it to Pr
 with this instruction:
 
 > Review this project against the repository and its product goals. Return only
-> the edited `pro_steering_template` JSON object. Keep active, blocked,
-> in-review, and completed tasks unchanged. Add or revise only future work.
+> the edited `pro_steering_template` JSON object. Keep active, in-review, and
+> completed tasks unchanged. Revise a blocked task only when its blocker
+> explicitly requires Pro steering. Add or revise only future work otherwise.
 
 Paste Pro's JSON into **Pro proposal**, select **Preview**, then **Apply
 atomically**. A proposal made from an older Board version is rejected.
+Changing a blocked task preserves its blocker evidence, advances its revision,
+and returns it to ready. Running and in-review work remain immutable. Completed
+work remains immutable except that a removed agent's stale assignment may be
+cleared without changing completion evidence.
 
 ## Git/CLI
 

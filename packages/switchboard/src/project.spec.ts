@@ -184,19 +184,56 @@ describe('canonical project mutations', () => {
     expect(() => mutate(project, PLANNER, proposal)).toThrow('cannot edit done task old');
 
     members[CODER] = { ...members[CODER]!, removed_ts: TS };
+    const replacement = '01J00000000000000000000004';
+    members[replacement] = {
+      id: replacement, kind: 'agent', handle: 'coder', display_name: 'Coder replacement',
+      harness: 'fake', state: 'idle', conventions_sent: false, misaddressed: false, roster_stale: false,
+    };
     try {
-      project = mutate(project, PLANNER, proposal);
+      project = mutate(project, PLANNER, {
+        ...proposal,
+        tasks: [{ ...proposal.tasks[0]!, assignee: replacement }],
+      });
+      expect(project.tasks[0]?.assignee).toBe(CODER);
+      project = mutate(project, PLANNER, { ...proposal, expected_version: 6, proposal_version: 2 });
       expect(project.tasks[0]).toMatchObject({
         id: 'old', status: 'done', evidence: [{ type: 'note', text: 'complete' }],
       });
       expect(project.tasks[0]).not.toHaveProperty('assignee');
       expect(() => mutate(project, PLANNER, {
-        ...proposal, expected_version: 6, proposal_version: 2,
+        ...proposal, expected_version: 7, proposal_version: 3,
         tasks: [{ ...proposal.tasks[0]!, title: 'Rewrite history' }],
       })).toThrow('cannot edit done task old');
     } finally {
       delete members[CODER]!.removed_ts;
+      delete members[replacement];
     }
+  });
+
+  it('revises blocked work through steering without losing blocker evidence', () => {
+    let project = initialized();
+    project = mutate(project, PLANNER, { op: 'add_milestone', expected_version: 1, id: 'm1', title: 'Build' });
+    project = mutate(project, PLANNER, {
+      op: 'add_task', expected_version: 2, id: 't1', milestone_id: 'm1', title: 'Code', description: 'Before',
+      acceptance_criteria: ['Old'], dependencies: [], assignee: CODER,
+      gatekeepers: [REVIEWER], workspace_mode: 'write',
+    });
+    project = mutate(project, PLANNER, {
+      op: 'block', expected_version: 3, task_id: 't1', note: 'Pro must revise acceptance before dispatch',
+    });
+    project = mutate(project, PLANNER, {
+      op: 'reconcile_plan', expected_version: 4, proposal_version: 1,
+      milestones: [{ id: 'm1', title: 'Build' }],
+      tasks: [{
+        id: 't1', milestone_id: 'm1', title: 'Code corrected', description: 'After',
+        acceptance_criteria: ['New'], dependencies: [], assignee: CODER,
+        gatekeepers: [REVIEWER], workspace_mode: 'write',
+      }],
+    });
+    expect(project.tasks[0]).toMatchObject({
+      id: 't1', title: 'Code corrected', status: 'ready', revision: 1,
+      evidence: [{ type: 'note', text: 'Pro must revise acceptance before dispatch' }],
+    });
   });
 
   it('atomically reconciles fresh steering while protecting active work', () => {
