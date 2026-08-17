@@ -96,9 +96,9 @@ export function spawnCodexAppServer(
       cwd: context.cwd,
       env: context.env,
       stdio: ['pipe', 'pipe', 'pipe'],
-      // The direct Windows engine gets its own process group so a command-side
-      // console cancellation cannot terminate the retaining switchboard.
-      detached: nativeCommand !== undefined,
+      // Keep the native engine hidden without giving every child console app
+      // its own Windows Terminal tab.
+      detached: false,
       windowsHide: nativeCommand !== undefined,
     }) as ChildProcessWithoutNullStreams;
     // harn:end codex-app-server-resolves-windows-command-shims

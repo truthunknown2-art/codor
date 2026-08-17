@@ -60,7 +60,7 @@ describe('portable Codex app-server launcher', () => {
   });
 
   it.skipIf(process.platform !== 'win32')(
-    'bypasses the npm shim and isolates the installed native Windows engine',
+    'bypasses the npm shim and hides the installed native Windows engine',
     async () => {
       const dir = mkdtempSync(join(tmpdir(), 'codor-codex-native-'));
       dirs.push(dir);
@@ -93,7 +93,7 @@ describe('portable Codex app-server launcher', () => {
         cwd: dir,
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
-        detached: true,
+        detached: false,
         windowsHide: true,
       });
       child.emit('spawn');
