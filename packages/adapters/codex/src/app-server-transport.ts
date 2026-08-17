@@ -1,4 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import { accessSync, constants, realpathSync, statSync } from 'node:fs';
+import { delimiter, join } from 'node:path';
 import { createInterface, type Interface as ReadlineInterface } from 'node:readline';
 import spawn from 'cross-spawn';
 
@@ -37,6 +39,46 @@ function isRecord(value: unknown): value is JsonRecord {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+/** Bypass the signal-forwarding npm shim when its native Windows binary is installed. */
+function nativeWindowsCodex(command: string, env: NodeJS.ProcessEnv): string | undefined {
+  if (process.platform !== 'win32') return undefined;
+  if (command.toLowerCase().endsWith('.exe')) return command;
+  if (command !== 'codex') return undefined;
+  const target = process.arch === 'arm64'
+    ? ['@openai', 'codex-win32-arm64', 'aarch64-pc-windows-msvc']
+    : process.arch === 'x64'
+      ? ['@openai', 'codex-win32-x64', 'x86_64-pc-windows-msvc']
+      : undefined;
+  if (target === undefined) return undefined;
+  for (const directory of (env.PATH ?? '').split(delimiter).filter(Boolean)) {
+    try {
+      accessSync(join(directory, 'codex.cmd'), constants.X_OK);
+    } catch {
+      continue;
+    }
+    let root: string;
+    try {
+      root = realpathSync(join(directory, 'node_modules', '@openai', 'codex'));
+    } catch {
+      return undefined;
+    }
+    for (const candidate of [
+      join(root, 'node_modules', ...target.slice(0, 2), 'vendor', target[2]!, 'bin', 'codex.exe'),
+      join(root, '..', target[1]!, 'vendor', target[2]!, 'bin', 'codex.exe'),
+      join(root, 'vendor', target[2]!, 'bin', 'codex.exe'),
+    ]) {
+      try {
+        accessSync(candidate, constants.X_OK);
+        if (!statSync(candidate).isDirectory()) return candidate;
+      } catch {
+        // Keep checking this install's standard package layouts.
+      }
+    }
+    return undefined;
+  }
+  return undefined;
+}
+
 // harn:assume codex-app-server-contract-is-pinned-to-0-144-5 ref=codex-app-server-transport
 /**
  * Spawn the installed Codex app-server without probing it. The app-server is
@@ -47,13 +89,15 @@ export function spawnCodexAppServer(
 ): Promise<ChildProcessWithoutNullStreams> {
   return new Promise((resolve, reject) => {
     // harn:assume codex-app-server-resolves-windows-command-shims ref=codex-app-server-portable-spawn-provider
-    const child = spawn(context.command, ['app-server'], {
+    const nativeCommand = nativeWindowsCodex(context.command, context.env);
+    const child = spawn(nativeCommand ?? context.command, ['app-server'], {
       cwd: context.cwd,
       env: context.env,
       stdio: ['pipe', 'pipe', 'pipe'],
-      // stdin EOF on daemon exit is the final ownership boundary. Unlike the
-      // old per-turn driver, interruption is an RPC and needs no process group.
-      detached: false,
+      // The direct Windows engine gets its own process group so a command-side
+      // console cancellation cannot terminate the retaining switchboard.
+      detached: nativeCommand !== undefined,
+      windowsHide: nativeCommand !== undefined,
     }) as ChildProcessWithoutNullStreams;
     // harn:end codex-app-server-resolves-windows-command-shims
     const onError = (error: Error) => {
