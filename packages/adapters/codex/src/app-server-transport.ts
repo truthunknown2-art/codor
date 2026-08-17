@@ -50,7 +50,9 @@ function nativeWindowsCodex(command: string, env: NodeJS.ProcessEnv): string | u
       ? ['@openai', 'codex-win32-x64', 'x86_64-pc-windows-msvc']
       : undefined;
   if (target === undefined) return undefined;
-  for (const directory of (env.PATH ?? '').split(delimiter).filter(Boolean)) {
+  const path = Object.entries(env)
+    .find(([key]) => key.toLowerCase() === 'path')?.[1] ?? '';
+  for (const directory of path.split(delimiter).filter(Boolean)) {
     try {
       accessSync(join(directory, 'codex.cmd'), constants.X_OK);
     } catch {

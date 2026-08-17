@@ -84,7 +84,8 @@ describe('portable Codex app-server launcher', () => {
       writeFileSync(native, 'fake');
       const child = fakeChild();
       vi.mocked(spawn).mockReturnValue(child);
-      const env = { PATH: `${dir}${delimiter}C:\\Windows` };
+      // Scheduled Tasks preserve Windows' conventional `Path` casing.
+      const env = { Path: `${dir}${delimiter}C:\\Windows` };
 
       const launched = spawnCodexAppServer({ command: 'codex', cwd: dir, env });
 
