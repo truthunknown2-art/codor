@@ -642,18 +642,27 @@ export function renderWindowsServiceScript(options: {
 }
 
 export function renderWindowsScheduledTask(options: {
-  scriptPath: string;
+  launcherPath: string;
   user: string;
 }): string {
-  const command = `-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${options.scriptPath}"`;
   return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>${xml(options.user)}</UserId></LogonTrigger></Triggers>
   <Principals><Principal id="Author"><UserId>${xml(options.user)}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
   <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>true</AllowHardTerminate><StartWhenAvailable>true</StartWhenAvailable><RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable><IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>true</Hidden><RunOnlyIfIdle>false</RunOnlyIfIdle><WakeToRun>false</WakeToRun><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><Priority>7</Priority></Settings>
-  <Actions Context="Author"><Exec><Command>powershell.exe</Command><Arguments>${xml(command)}</Arguments></Exec></Actions>
+  <Actions Context="Author"><Exec><Command>wscript.exe</Command><Arguments>${xml(`"${options.launcherPath}"`)}</Arguments></Exec></Actions>
 </Task>
 `;
+}
+
+export function renderWindowsServiceLauncher(scriptPath: string): string {
+  const command = `powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${scriptPath}"`;
+  const literal = command.replaceAll('"', '""');
+  return [
+    'Set shell = CreateObject("WScript.Shell")',
+    `exitCode = shell.Run("${literal}", 0, True)`,
+    'WScript.Quit exitCode',
+  ].join('\r\n') + '\r\n';
 }
 // harn:end windows-setup-installs-private-task-service
 
@@ -777,6 +786,7 @@ export async function runSetup(options: SetupOptions): Promise<void> {
     : undefined;
   // harn:end platform-services-propagate-destination-pnpm-node-path
   const windowsScriptPath = join(configDir, 'codor-service.ps1');
+  const windowsLauncherPath = join(configDir, 'codor-service.vbs');
   const windowsTaskPath = join(configDir, 'codor-task.xml');
   const windowsUser = options.env.USERNAME ?? options.env.USER;
   if (platform === 'win32' && !windowsUser) {
@@ -823,9 +833,12 @@ export async function runSetup(options: SetupOptions): Promise<void> {
   const windowsScript = platform === 'win32'
     ? renderWindowsServiceScript({ dataDir, logDir, nodeModulePath, nodePath, runtime: serviceRuntime, servicePath, tokenPath })
     : undefined;
+  const windowsLauncher = platform === 'win32'
+    ? renderWindowsServiceLauncher(windowsScriptPath)
+    : undefined;
   // harn:end platform-services-propagate-destination-pnpm-node-path
   const windowsTask = platform === 'win32'
-    ? renderWindowsScheduledTask({ scriptPath: windowsScriptPath, user: windowsUser! })
+    ? renderWindowsScheduledTask({ launcherPath: windowsLauncherPath, user: windowsUser! })
     : undefined;
 
   // harn:assume setup-unattended-mutation-requires-explicit-intent ref=setup-unattended-runtime
@@ -893,6 +906,7 @@ export async function runSetup(options: SetupOptions): Promise<void> {
       options.out(`[dry-run] create ${logDir}`);
       options.out(`[dry-run] install generated ServiceScript -> ${windowsScriptPath}`);
       for (const line of windowsScript!.trimEnd().split(/\r?\n/)) options.out(line);
+      options.out(`[dry-run] install generated ServiceLauncher -> ${windowsLauncherPath}`);
       options.out(`[dry-run] install generated ScheduledTaskXml -> ${windowsTaskPath} as UTF-16LE`);
       for (const line of windowsTask!.trimEnd().split('\n')) options.out(line);
       options.out(`[dry-run] schtasks /Create /TN "Codor Switchboard" /XML "${windowsTaskPath}" /F`);
@@ -1104,6 +1118,7 @@ export async function runSetup(options: SetupOptions): Promise<void> {
     } else {
       mkdirSync(logDir, { recursive: true });
       writeFileSync(windowsScriptPath, windowsScript!, 'utf8');
+      writeFileSync(windowsLauncherPath, windowsLauncher!, 'utf8');
       writeFileSync(windowsTaskPath, Buffer.from(`﻿${windowsTask!}`, 'utf16le'));
       exec('schtasks', ['/Create', '/TN', 'Codor Switchboard', '/XML', windowsTaskPath, '/F']);
       exec('schtasks', ['/Run', '/TN', 'Codor Switchboard']);
